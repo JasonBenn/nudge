@@ -17,9 +17,11 @@ final class CheckInCoordinator {
     private var currentSiteTitle = ""
     private var currentNudge = ""
     private var modelContext: ModelContext?
+    private weak var detector: DistractionDetector?
 
-    func setModelContext(_ ctx: ModelContext) {
+    func setup(modelContext ctx: ModelContext, detector: DistractionDetector) {
         self.modelContext = ctx
+        self.detector = detector
     }
 
     // MARK: - Trigger flow
@@ -63,8 +65,9 @@ final class CheckInCoordinator {
         let view = CheckInView(
             data: data,
             coordinator: self,
-            onComplete: { [weak self] trigger, replacement in
+            onComplete: { [weak self] trigger, replacement, tabAction in
                 self?.saveEvent(trigger: trigger, replacement: replacement)
+                self?.handleTabAction(tabAction)
                 self?.dismissPanel()
             },
             onDismiss: { [weak self] in
@@ -210,6 +213,105 @@ final class CheckInCoordinator {
         let response = Response(text: text, type: type)
         ctx.insert(response)
         return response
+    }
+
+    // MARK: - Tab Actions
+
+    private func handleTabAction(_ action: CheckInView.TabAction) {
+        switch action {
+        case .closeAll:
+            closeDistractingTabs(keepCurrent: false)
+        case .closeAllButCurrent:
+            closeDistractingTabs(keepCurrent: true)
+        case .closeInFiveMinutes:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
+                self?.closeDistractingTabs(keepCurrent: false)
+            }
+        case .leaveOpen:
+            break
+        }
+    }
+
+    private func closeDistractingTabs(keepCurrent: Bool) {
+        // Step 1: Get tab info from all windows (URL + title for regex matching)
+        let getTabsScript = """
+        set output to ""
+        tell application "Google Chrome"
+            set frontIndex to index of front window
+            repeat with w from 1 to (count of windows)
+                set theWindow to window w
+                set wIndex to index of theWindow
+                set activeIndex to active tab index of theWindow
+                set isFront to (wIndex = frontIndex)
+                repeat with t from 1 to (count of tabs of theWindow)
+                    set tabURL to URL of tab t of theWindow
+                    set tabTitle to title of tab t of theWindow
+                    set output to output & w & "\\t" & t & "\\t" & activeIndex & "\\t" & isFront & "\\t" & tabURL & "\\t" & tabTitle & "\\n"
+                end repeat
+            end repeat
+        end tell
+        return output
+        """
+
+        guard let script = NSAppleScript(source: getTabsScript) else { return }
+        var error: NSDictionary?
+        let result = script.executeAndReturnError(&error)
+        if let error {
+            print("[Nudge] AppleScript error getting tabs: \(error)")
+            return
+        }
+
+        let output = result.stringValue ?? ""
+        // Parse: each line is "windowIndex\ttabIndex\tactiveTabIndex\tisFrontWindow\turl\ttitle"
+        struct TabInfo {
+            let windowIndex: Int
+            let tabIndex: Int
+            let isFrontActiveTab: Bool
+            let url: String
+        }
+
+        var tabsToClose: [TabInfo] = []
+        for line in output.components(separatedBy: "\n") where !line.isEmpty {
+            let parts = line.components(separatedBy: "\t")
+            guard parts.count >= 6,
+                  let windowIdx = Int(parts[0]),
+                  let tabIdx = Int(parts[1]),
+                  let activeIdx = Int(parts[2]) else { continue }
+            let isFrontWindow = parts[3] == "true"
+            let url = parts[4]
+            let title = parts[5]
+            let isFrontActiveTab = isFrontWindow && tabIdx == activeIdx
+            // Match against "url title" like the distraction detector does
+            let matchText = "\(url) \(title)"
+            let isDistracting = detector?.isDistracting(matchText) ?? false
+
+            if isDistracting && !(keepCurrent && isFrontActiveTab) {
+                tabsToClose.append(TabInfo(windowIndex: windowIdx, tabIndex: tabIdx, isFrontActiveTab: isFrontActiveTab, url: url))
+            }
+        }
+
+        guard !tabsToClose.isEmpty else {
+            print("[Nudge] No distracting tabs to close")
+            return
+        }
+
+        // Step 2: Close tabs in reverse order (so indices stay valid)
+        let sorted = tabsToClose.sorted { ($0.windowIndex, $0.tabIndex) > ($1.windowIndex, $1.tabIndex) }
+        let closeCommands = sorted.map { "close tab \($0.tabIndex) of window \($0.windowIndex)" }
+        let closeScript = """
+        tell application "Google Chrome"
+            \(closeCommands.joined(separator: "\n            "))
+        end tell
+        """
+
+        print("[Nudge] Closing \(tabsToClose.count) distracting tab(s)")
+        if let closeAppleScript = NSAppleScript(source: closeScript) {
+            var closeError: NSDictionary?
+            closeAppleScript.executeAndReturnError(&closeError)
+            if let closeError {
+                print("[Nudge] AppleScript error closing tabs: \(closeError)")
+            }
+        }
     }
 
     // MARK: - Context

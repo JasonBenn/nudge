@@ -44,7 +44,7 @@ struct NudgeApp: App {
             .onAppear {
                 guard !hasSetup else { return }
                 hasSetup = true
-                coordinator.setModelContext(modelContainer.mainContext)
+                coordinator.setup(modelContext: modelContainer.mainContext, detector: detector)
                 detector.onDistraction = { url, title in
                     coordinator.handleDistraction(url: url, title: title)
                 }

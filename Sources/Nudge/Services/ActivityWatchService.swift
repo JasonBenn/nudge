@@ -21,6 +21,23 @@ struct AWEventData: Decodable {
     }
 }
 
+// MARK: - AW Settings / Categories
+
+struct AWSettings: Decodable {
+    let classes: [AWCategory]
+}
+
+struct AWCategory: Decodable {
+    let name: [String]
+    let rule: AWRule
+}
+
+struct AWRule: Decodable {
+    let type: String
+    let regex: String?
+    let ignore_case: Bool?
+}
+
 enum ActivityWatchService {
     /// Fetch all bucket IDs from the AW API.
     static func listBuckets() async -> [String] {
@@ -58,6 +75,32 @@ enum ActivityWatchService {
             }
         }
         return best
+    }
+
+    /// Fetch AW settings and extract distraction regexes.
+    /// Returns compiled NSRegularExpression objects for all "Distraction" subcategories.
+    static func fetchDistractionPatterns() async -> [NSRegularExpression] {
+        guard let url = URL(string: "\(Config.awBase)/0/settings") else { return [] }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let settings = try JSONDecoder().decode(AWSettings.self, from: data)
+            var patterns: [NSRegularExpression] = []
+            for category in settings.classes {
+                guard category.name.first == "Distraction",
+                      category.rule.type == "regex",
+                      let regex = category.rule.regex else { continue }
+                let options: NSRegularExpression.Options = category.rule.ignore_case == true ? [.caseInsensitive] : []
+                if let compiled = try? NSRegularExpression(pattern: regex, options: options) {
+                    patterns.append(compiled)
+                    print("[AW] Loaded distraction pattern: \(category.name.joined(separator: " > "))")
+                }
+            }
+            print("[AW] Loaded \(patterns.count) distraction patterns from ActivityWatch")
+            return patterns
+        } catch {
+            print("[AW] Failed to fetch settings: \(error)")
+            return []
+        }
     }
 
     /// Fetch recent events from a bucket.

@@ -8,14 +8,6 @@ enum Config {
     static let workEndHour = 17
     static let claudeModel = "claude-opus-4-6"
 
-    static let distractingDomains: Set<String> = [
-        "twitter.com",
-        "x.com",
-        "youtube.com",
-        "news.ycombinator.com",
-        "substack.com",
-    ]
-
     static let dbPath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/code/nudge/nudge.db"

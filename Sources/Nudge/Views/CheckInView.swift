@@ -3,7 +3,7 @@ import SwiftUI
 struct CheckInView: View {
     let data: CheckInData
     let coordinator: CheckInCoordinator
-    let onComplete: (String, String) -> Void
+    let onComplete: (String, String, TabAction) -> Void
     let onDismiss: () -> Void
 
     @State private var state: CheckInState = .q1
@@ -14,9 +14,17 @@ struct CheckInView: View {
     @State private var isLoadingQ2 = false
     @FocusState private var inputFocused: Bool
 
+    enum TabAction: String {
+        case closeAll = "close_all"
+        case closeAllButCurrent = "close_all_but_current"
+        case closeInFiveMinutes = "close_in_5m"
+        case leaveOpen = "leave_open"
+    }
+
     private enum CheckInState {
         case q1
         case q2
+        case q3
         case chat(phase: ChatPhase)
         case done
     }
@@ -58,6 +66,8 @@ struct CheckInView: View {
                         q1View
                     case .q2:
                         q2View
+                    case .q3:
+                        q3View
                     case .chat(let phase):
                         chatPhaseView(phase: phase)
                     case .done:
@@ -70,7 +80,8 @@ struct CheckInView: View {
                 ))
             }
         }
-        .frame(width: 420, height: 500)
+        .frame(width: 420)
+        .fixedSize(horizontal: false, vertical: true)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -125,7 +136,7 @@ struct CheckInView: View {
             }
         }
         .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Q2
@@ -157,9 +168,8 @@ struct CheckInView: View {
                     OptionButton(title: option) {
                         replacementResponse = option
                         withAnimation(.easeInOut(duration: 0.25)) {
-                            state = .done
+                            state = .q3
                         }
-                        onComplete(triggerResponse, option)
                     }
                 }
             }
@@ -191,8 +201,35 @@ struct CheckInView: View {
             }
         }
         .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .onAppear { customInput = "" }
+    }
+
+    // MARK: - Q3
+
+    private var q3View: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("What about those distracting tabs?")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.primary)
+
+            VStack(spacing: 8) {
+                OptionButton(title: "Close all distracting tabs now") {
+                    completeWithTabAction(.closeAll)
+                }
+                OptionButton(title: "Close all tabs except the current one") {
+                    completeWithTabAction(.closeAllButCurrent)
+                }
+                OptionButton(title: "Close them in 5 minutes") {
+                    completeWithTabAction(.closeInFiveMinutes)
+                }
+                OptionButton(title: "Leave them open") {
+                    completeWithTabAction(.leaveOpen)
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Chat
@@ -227,13 +264,13 @@ struct CheckInView: View {
                     case .replacement:
                         replacementResponse = summary.isEmpty ? replacementResponse : summary
                         withAnimation(.easeInOut(duration: 0.25)) {
-                            state = .done
+                            state = .q3
                         }
-                        onComplete(triggerResponse, replacementResponse)
                     }
                 }
             }
         )
+        .frame(height: 350)
     }
 
     // MARK: - Done
@@ -257,10 +294,18 @@ struct CheckInView: View {
             .buttonStyle(.borderedProminent)
             .padding(.top, 8)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Actions
+
+    private func completeWithTabAction(_ action: TabAction) {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            state = .done
+        }
+        onComplete(triggerResponse, replacementResponse, action)
+    }
 
     private func submitCustomTrigger() {
         let text = customInput.trimmingCharacters(in: .whitespaces)

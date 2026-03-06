@@ -10,6 +10,9 @@ final class DistractionDetector {
     /// Called on the main actor when a fresh distraction is detected.
     var onDistraction: ((String, String) -> Void)?
 
+    /// Compiled distraction patterns from AW settings. Shared with CheckInCoordinator for tab closing.
+    private(set) var distractionPatterns: [NSRegularExpression] = []
+
     private var bucketId: String?
     private var lastEventTimestamp: String?
     private var lastTriggerTime: Date = .distantPast
@@ -23,6 +26,11 @@ final class DistractionDetector {
     func startPolling() {
         pollingTask?.cancel()
         pollingTask = Task { [weak self] in
+            // Load distraction patterns from AW on first poll
+            if let self {
+                self.distractionPatterns = await ActivityWatchService.fetchDistractionPatterns()
+            }
+
             while !Task.isCancelled {
                 if let self, !self.isPaused {
                     await self.poll()
@@ -52,7 +60,9 @@ final class DistractionDetector {
         if ts == lastEventTimestamp { return }
         lastEventTimestamp = ts
 
-        let currentlyDistracting = isDistracting(url)
+        // Match against both URL and title, like AW does
+        let matchText = "\(url) \(title)"
+        let currentlyDistracting = isDistracting(matchText)
         let isFresh = currentlyDistracting && !lastURLWasDistracting
         lastURLWasDistracting = currentlyDistracting
 
@@ -77,9 +87,9 @@ final class DistractionDetector {
         }
     }
 
-    private func isDistracting(_ url: String) -> Bool {
-        let lower = url.lowercased()
-        return Config.distractingDomains.contains { lower.contains($0) }
+    func isDistracting(_ text: String) -> Bool {
+        let range = NSRange(text.startIndex..., in: text)
+        return distractionPatterns.contains { $0.firstMatch(in: text, range: range) != nil }
     }
 
     deinit {

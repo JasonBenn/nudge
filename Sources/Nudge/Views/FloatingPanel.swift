@@ -23,9 +23,28 @@ class FloatingPanel: NSPanel {
 
     func show<Content: View>(_ view: Content) {
         let hosting = NSHostingView(rootView: AnyView(view))
-        hosting.frame = contentRect(forFrameRect: frame)
-        contentView = hosting
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        let wrapper = NSView()
+        wrapper.addSubview(hosting)
+        NSLayoutConstraint.activate([
+            hosting.topAnchor.constraint(equalTo: wrapper.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+            hosting.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+        ])
+        contentView = wrapper
         hostingView = hosting
+
+        // Let SwiftUI determine the intrinsic size
+        let fittingSize = hosting.fittingSize
+        let newFrame = NSRect(
+            x: frame.origin.x,
+            y: frame.origin.y,
+            width: max(fittingSize.width, 420),
+            height: min(fittingSize.height, 700)
+        )
+        setFrame(newFrame, display: true)
+        center()
         makeKeyAndOrderFront(nil)
     }
 

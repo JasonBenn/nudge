@@ -11,6 +11,7 @@ struct OptionButton: View {
             Text(title)
                 .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
