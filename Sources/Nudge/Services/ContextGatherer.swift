@@ -23,9 +23,18 @@ struct ContextGatherer {
             parts.append("\nLast \(events.count) distraction events:")
             for event in events {
                 let ts = formatter.string(from: event.timestamp)
-                let trigger = event.triggerResponse?.text ?? "(skipped)"
-                let replacement = event.replacementResponse?.text ?? "(skipped)"
-                parts.append("- \(ts) | \(event.siteURL) | trigger: \(trigger) | replacement: \(replacement)")
+                if let i = event.interaction {
+                    var line = "- \(ts) | \(event.siteURL)"
+                    if !i.triggerSelection.isEmpty { line += " | trigger: \(i.triggerSelection)" }
+                    if !i.replacementSelection.isEmpty { line += " | replacement: \(i.replacementSelection)" }
+                    if !i.conversation.isEmpty {
+                        let convo = i.conversation.map { "\($0.role): \($0.content)" }.joined(separator: " → ")
+                        line += " | chat: \(convo)"
+                    }
+                    parts.append(line)
+                } else {
+                    parts.append("- \(ts) | \(event.siteURL) | (no interaction data)")
+                }
             }
         }
 

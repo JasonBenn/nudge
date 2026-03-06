@@ -19,9 +19,7 @@ final class DistractionDetector {
     private var lastURLWasDistracting = false
     private var pollingTask: Task<Void, Never>?
 
-    init() {
-        startPolling()
-    }
+    init() {}
 
     func startPolling() {
         pollingTask?.cancel()

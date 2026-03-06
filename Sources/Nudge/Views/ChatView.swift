@@ -47,13 +47,29 @@ struct ChatView: View {
 
             Divider()
 
-            HStack(spacing: 10) {
-                TextField("Reply...", text: $inputText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14))
-                    .focused($inputFocused)
-                    .onSubmit(sendMessage)
-                    .padding(.vertical, 8)
+            HStack(alignment: .bottom, spacing: 10) {
+                ZStack(alignment: .topLeading) {
+                    if inputText.isEmpty {
+                        Text("Reply...")
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary.opacity(0.6))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 8)
+                    }
+                    TextEditor(text: $inputText)
+                        .font(.system(size: 14))
+                        .focused($inputFocused)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 20, maxHeight: 80)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onKeyPress(.return, phases: .down) { event in
+                            if event.modifiers.isEmpty {
+                                sendMessage()
+                                return .handled
+                            }
+                            return .ignored
+                        }
+                }
 
                 Button("Send") {
                     sendMessage()
@@ -62,6 +78,7 @@ struct ChatView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.primary)
                 .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty)
+                .padding(.bottom, 6)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)

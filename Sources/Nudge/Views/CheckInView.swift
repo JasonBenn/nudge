@@ -102,6 +102,7 @@ struct CheckInView: View {
                 ForEach(data.trigger_options, id: \.self) { option in
                     OptionButton(title: option) {
                         triggerResponse = option
+                        coordinator.updateEvent(triggerSelection: option)
                         withAnimation(.easeInOut(duration: 0.25)) {
                             state = .q2
                         }
@@ -167,6 +168,7 @@ struct CheckInView: View {
                 ForEach(q2Options, id: \.self) { option in
                     OptionButton(title: option) {
                         replacementResponse = option
+                        coordinator.updateEvent(replacementSelection: option)
                         withAnimation(.easeInOut(duration: 0.25)) {
                             state = .q3
                         }
@@ -311,6 +313,7 @@ struct CheckInView: View {
         let text = customInput.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
         triggerResponse = text
+        coordinator.updateEvent(triggerSelection: text)
         customInput = ""
         coordinator.chatMessages = []
         coordinator.streamingText = ""
@@ -324,6 +327,7 @@ struct CheckInView: View {
         let text = customInput.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
         replacementResponse = text
+        coordinator.updateEvent(replacementSelection: text)
         customInput = ""
         coordinator.chatMessages = []
         coordinator.streamingText = ""

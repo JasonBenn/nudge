@@ -9,6 +9,11 @@ final class CheckInCoordinator {
     var streamingText = ""
     var checkInData: CheckInData?
     var isLoading = false
+    var animationIcon = "eye"
+
+    private static let eyeFrames = ["eye", "eye.fill", "eye.circle", "eye.circle.fill", "eye.fill", "eye"]
+    private var animationTimer: Timer?
+    private var animationFrame = 0
 
     private let claude = ClaudeService()
     private let contextGatherer = ContextGatherer()
@@ -18,6 +23,7 @@ final class CheckInCoordinator {
     private var currentNudge = ""
     private var modelContext: ModelContext?
     private weak var detector: DistractionDetector?
+    private var currentEvent: NudgeEvent?
 
     func setup(modelContext ctx: ModelContext, detector: DistractionDetector) {
         self.modelContext = ctx
@@ -27,8 +33,13 @@ final class CheckInCoordinator {
     // MARK: - Trigger flow
 
     func handleDistraction(url: String, title: String) {
+        if isLoading || panel.isVisible {
+            print("[Nudge] Skipping — already showing check-in")
+            return
+        }
         currentSiteURL = url
         currentSiteTitle = title
+        startAnimation()
         isLoading = true
         chatMessages = []
         streamingText = ""
@@ -41,6 +52,8 @@ final class CheckInCoordinator {
                 self.checkInData = data
                 self.currentNudge = data.nudge
                 self.isLoading = false
+                self.stopAnimation()
+                self.saveInitialEvent(data: data)
                 showPanel()
             } catch {
                 print("[Nudge] Failed to generate check-in: \(error)")
@@ -53,6 +66,8 @@ final class CheckInCoordinator {
                 self.checkInData = fallback
                 self.currentNudge = fallback.nudge
                 self.isLoading = false
+                self.stopAnimation()
+                self.saveInitialEvent(data: fallback)
                 showPanel()
             }
         }
@@ -66,7 +81,7 @@ final class CheckInCoordinator {
             data: data,
             coordinator: self,
             onComplete: { [weak self] trigger, replacement, tabAction in
-                self?.saveEvent(trigger: trigger, replacement: replacement)
+                self?.updateEvent(triggerSelection: trigger, replacementSelection: replacement, tabAction: tabAction.rawValue)
                 self?.handleTabAction(tabAction)
                 self?.dismissPanel()
             },
@@ -82,6 +97,7 @@ final class CheckInCoordinator {
         chatMessages = []
         streamingText = ""
         checkInData = nil
+        currentEvent = nil
     }
 
     // MARK: - Chat
@@ -105,6 +121,7 @@ final class CheckInCoordinator {
                 // Finalize: move streaming text to a proper message
                 self.chatMessages.append(ChatMessage(role: .assistant, content: accumulated))
                 self.streamingText = ""
+                self.updateEvent()
             } catch {
                 print("[Nudge] Chat stream error: \(error)")
                 if !accumulated.isEmpty {
@@ -168,51 +185,37 @@ final class CheckInCoordinator {
 
     // MARK: - Persistence
 
-    private func saveEvent(trigger: String, replacement: String) {
+    private func saveInitialEvent(data: CheckInData) {
         guard let ctx = modelContext else { return }
 
-        let event = NudgeEvent(siteURL: currentSiteURL, siteTitle: currentSiteTitle, nudge: currentNudge)
+        let interaction = Interaction(
+            nudge: data.nudge,
+            triggerSelection: "",
+            replacementSelection: "",
+            tabAction: "",
+            conversation: []
+        )
 
-        if !trigger.isEmpty {
-            let triggerResp = getOrCreateResponse(ctx: ctx, text: trigger, type: "trigger")
-            event.triggerResponse = triggerResp
-        }
-        if !replacement.isEmpty {
-            let replacementResp = getOrCreateResponse(ctx: ctx, text: replacement, type: "replacement")
-            event.replacementResponse = replacementResp
-        }
-
-        // Save conversation if there are chat messages
-        if !chatMessages.isEmpty {
-            let conversation = Conversation()
-            conversation.event = event
-            event.conversation = conversation
-            ctx.insert(conversation)
-
-            for msg in chatMessages {
-                let message = Message(role: msg.role == .user ? "user" : "assistant", content: msg.content)
-                message.conversation = conversation
-                conversation.messages.append(message)
-                ctx.insert(message)
-            }
-        }
-
+        let event = NudgeEvent(siteURL: currentSiteURL, siteTitle: currentSiteTitle, interaction: interaction)
         ctx.insert(event)
         try? ctx.save()
-        print("[Nudge] Event saved — trigger: \(trigger), replacement: \(replacement)")
+        currentEvent = event
+        print("[Nudge] Event created for \(currentSiteURL)")
     }
 
-    private func getOrCreateResponse(ctx: ModelContext, text: String, type: String) -> Response {
-        let predicate = #Predicate<Response> { r in
-            r.text == text && r.type == type
+    func updateEvent(triggerSelection: String? = nil, replacementSelection: String? = nil, tabAction: String? = nil) {
+        guard let event = currentEvent, var interaction = event.interaction else { return }
+
+        if let t = triggerSelection { interaction.triggerSelection = t }
+        if let r = replacementSelection { interaction.replacementSelection = r }
+        if let a = tabAction { interaction.tabAction = a }
+
+        interaction.conversation = chatMessages.map {
+            Interaction.ConversationMessage(role: $0.role == .user ? "user" : "assistant", content: $0.content)
         }
-        let descriptor = FetchDescriptor<Response>(predicate: predicate)
-        if let existing = try? ctx.fetch(descriptor).first {
-            return existing
-        }
-        let response = Response(text: text, type: type)
-        ctx.insert(response)
-        return response
+
+        event.interactionJSON = (try? String(data: JSONEncoder().encode(interaction), encoding: .utf8)) ?? "{}"
+        try? modelContext?.save()
     }
 
     // MARK: - Tab Actions
@@ -312,6 +315,26 @@ final class CheckInCoordinator {
                 print("[Nudge] AppleScript error closing tabs: \(closeError)")
             }
         }
+    }
+
+    // MARK: - Animation
+
+    private func startAnimation() {
+        animationFrame = 0
+        animationIcon = Self.eyeFrames[0]
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.animationFrame += 1
+                self.animationIcon = Self.eyeFrames[self.animationFrame % Self.eyeFrames.count]
+            }
+        }
+    }
+
+    private func stopAnimation() {
+        animationTimer?.invalidate()
+        animationTimer = nil
+        animationIcon = "eye"
     }
 
     // MARK: - Context

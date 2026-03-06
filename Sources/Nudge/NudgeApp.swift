@@ -6,11 +6,6 @@ struct NudgeApp: App {
     let modelContainer: ModelContainer
     @State private var detector = DistractionDetector()
     @State private var coordinator = CheckInCoordinator()
-    @State private var hasSetup = false
-    @State private var animationFrame = 0
-    @State private var animationTimer: Timer?
-
-    private static let eyeFrames = ["eye", "eye.fill", "eye.circle", "eye.circle.fill", "eye.fill", "eye"]
 
     init() {
         NSApp.setActivationPolicy(.accessory)
@@ -25,12 +20,19 @@ struct NudgeApp: App {
             )
             let config = ModelConfiguration(url: url)
             modelContainer = try ModelContainer(
-                for: Response.self, NudgeEvent.self, Conversation.self, Message.self,
+                for: NudgeEvent.self,
                 configurations: config
             )
         } catch {
             fatalError("Failed to set up ModelContainer: \(error)")
         }
+
+        coordinator.setup(modelContext: modelContainer.mainContext, detector: detector)
+        detector.onDistraction = { [coordinator] url, title in
+            coordinator.handleDistraction(url: url, title: title)
+        }
+        detector.startPolling()
+        print("[Nudge] Wiring complete — watching for distractions")
     }
 
     var body: some Scene {
@@ -43,33 +45,14 @@ struct NudgeApp: App {
                 },
                 onQuit: { NSApplication.shared.terminate(nil) }
             )
-            .task {
-                guard !hasSetup else { return }
-                hasSetup = true
-                coordinator.setup(modelContext: modelContainer.mainContext, detector: detector)
-                detector.onDistraction = { url, title in
-                    coordinator.handleDistraction(url: url, title: title)
-                }
-                print("[Nudge] Wiring complete — watching for distractions")
-            }
         } label: {
-            Image(systemName: coordinator.isLoading
-                  ? Self.eyeFrames[animationFrame % Self.eyeFrames.count]
-                  : "eye")
+            let icon = coordinator.isLoading
+                ? coordinator.animationIcon
+                : "eye"
+            Image(systemName: icon)
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(coordinator.isLoading ? Color.purple : Color.primary)
         }
         .menuBarExtraStyle(.menu)
-        .onChange(of: coordinator.isLoading) { _, loading in
-            if loading {
-                animationFrame = 0
-                animationTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { _ in
-                    Task { @MainActor in
-                        animationFrame += 1
-                    }
-                }
-            } else {
-                animationTimer?.invalidate()
-                animationTimer = nil
-            }
-        }
     }
 }
