@@ -14,6 +14,8 @@ struct NudgeApp: App {
 
     init() {
         NSApp.setActivationPolicy(.accessory)
+        setbuf(stdout, nil)
+        setbuf(stderr, nil)
 
         do {
             let url = URL(fileURLWithPath: Config.dbPath)
@@ -41,7 +43,7 @@ struct NudgeApp: App {
                 },
                 onQuit: { NSApplication.shared.terminate(nil) }
             )
-            .onAppear {
+            .task {
                 guard !hasSetup else { return }
                 hasSetup = true
                 coordinator.setup(modelContext: modelContainer.mainContext, detector: detector)
