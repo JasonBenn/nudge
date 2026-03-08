@@ -39,7 +39,9 @@ struct NudgeApp: App {
         MenuBarExtra {
             MenuBarView(
                 isPaused: detector.isPaused,
+                hasActiveCheckIn: coordinator.hasActiveCheckIn,
                 onTogglePause: { detector.isPaused.toggle() },
+                onShowCheckIn: { coordinator.refocusPanel() },
                 onTestNudge: {
                     coordinator.handleDistraction(url: "https://x.com", title: "X / Twitter")
                 },

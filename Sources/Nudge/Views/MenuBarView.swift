@@ -2,7 +2,9 @@ import SwiftUI
 
 struct MenuBarView: View {
     let isPaused: Bool
+    let hasActiveCheckIn: Bool
     let onTogglePause: () -> Void
+    let onShowCheckIn: () -> Void
     let onTestNudge: () -> Void
     let onQuit: () -> Void
 
@@ -19,6 +21,15 @@ struct MenuBarView: View {
             .padding(.top, 8)
 
             Divider()
+
+            if hasActiveCheckIn {
+                Button("Show Check-in") {
+                    onShowCheckIn()
+                }
+                .buttonStyle(MenuItemButtonStyle())
+
+                Divider()
+            }
 
             Button(isPaused ? "Resume" : "Pause") {
                 onTogglePause()

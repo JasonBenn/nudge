@@ -10,6 +10,7 @@ final class CheckInCoordinator {
     var checkInData: CheckInData?
     var isLoading = false
     var animationIcon = "eye"
+    var hasActiveCheckIn: Bool { panel.isVisible }
 
     private static let eyeFrames = ["eye", "eye.fill", "eye.circle", "eye.circle.fill", "eye.fill", "eye"]
     private var animationTimer: Timer?
@@ -90,6 +91,10 @@ final class CheckInCoordinator {
             }
         )
         panel.show(view)
+    }
+
+    func refocusPanel() {
+        panel.makeKeyAndOrderFront(nil)
     }
 
     func dismissPanel() {
