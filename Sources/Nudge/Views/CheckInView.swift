@@ -14,13 +14,6 @@ struct CheckInView: View {
     @State private var isLoadingQ2 = false
     @FocusState private var inputFocused: Bool
 
-    enum TabAction: String {
-        case closeAll = "close_all"
-        case closeAllButCurrent = "close_all_but_current"
-        case closeInFiveMinutes = "close_in_5m"
-        case leaveOpen = "leave_open"
-    }
-
     private enum CheckInState {
         case q1
         case q2

@@ -2,12 +2,20 @@ import Foundation
 import SwiftData
 import SwiftUI
 
+enum TabAction: String {
+    case closeAll = "close_all"
+    case closeAllButCurrent = "close_all_but_current"
+    case closeInFiveMinutes = "close_in_5m"
+    case leaveOpen = "leave_open"
+}
+
 @Observable
 @MainActor
 final class CheckInCoordinator {
     var chatMessages: [ChatMessage] = []
     var streamingText = ""
     var checkInData: CheckInData?
+    var onChatStateChanged: (([ChatMessage], String) -> Void)?
     var isLoading = false
     var animationIcon = "eye"
     var hasActiveCheckIn: Bool { panel.isVisible }
@@ -78,7 +86,7 @@ final class CheckInCoordinator {
 
     private func showPanel() {
         guard let data = checkInData else { return }
-        let view = CheckInView(
+        let vc = CheckInViewController(
             data: data,
             coordinator: self,
             onComplete: { [weak self] trigger, replacement, tabAction in
@@ -86,15 +94,29 @@ final class CheckInCoordinator {
                 self?.handleTabAction(tabAction)
                 self?.dismissPanel()
             },
-            onDismiss: { [weak self] in
-                self?.dismissPanel()
-            }
+            onDismiss: { [weak self] in self?.dismissPanel() }
         )
-        panel.show(view)
+        onChatStateChanged = { [weak vc] messages, streaming in
+            vc?.chatStateChanged(messages: messages, streamingText: streaming)
+        }
+        panel.show(viewController: vc)
     }
 
     func refocusPanel() {
         panel.makeKeyAndOrderFront(nil)
+    }
+
+    func runLatencyTest() {
+        dismissPanel()
+        checkInData = CheckInData(
+            nudge: "Latency test — measuring input lag",
+            trigger_options: ["Option A", "Option B", "Option C", "Option D", "Option E"],
+            replacement_options: ["Option A", "Option B", "Option C", "Option D", "Option E"]
+        )
+        currentSiteURL = "https://x.com"
+        currentSiteTitle = "Latency Test"
+        showPanel()
+        InputLatencyMonitor.shared.runTest(panel: panel)
     }
 
     func dismissPanel() {
@@ -103,6 +125,7 @@ final class CheckInCoordinator {
         streamingText = ""
         checkInData = nil
         currentEvent = nil
+        onChatStateChanged = nil
     }
 
     // MARK: - Chat
@@ -122,16 +145,19 @@ final class CheckInCoordinator {
                 for try await chunk in stream {
                     accumulated += chunk
                     self.streamingText = accumulated
+                    self.onChatStateChanged?(self.chatMessages, accumulated)
                 }
                 // Finalize: move streaming text to a proper message
                 self.chatMessages.append(ChatMessage(role: .assistant, content: accumulated))
                 self.streamingText = ""
+                self.onChatStateChanged?(self.chatMessages, "")
                 self.updateEvent()
             } catch {
                 print("[Nudge] Chat stream error: \(error)")
                 if !accumulated.isEmpty {
                     self.chatMessages.append(ChatMessage(role: .assistant, content: accumulated))
                     self.streamingText = ""
+                    self.onChatStateChanged?(self.chatMessages, "")
                 }
             }
         }
@@ -225,7 +251,7 @@ final class CheckInCoordinator {
 
     // MARK: - Tab Actions
 
-    private func handleTabAction(_ action: CheckInView.TabAction) {
+    private func handleTabAction(_ action: TabAction) {
         switch action {
         case .closeAll:
             closeDistractingTabs(keepCurrent: false)

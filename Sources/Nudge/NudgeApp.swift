@@ -32,6 +32,10 @@ struct NudgeApp: App {
             coordinator.handleDistraction(url: url, title: title)
         }
         detector.startPolling()
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.jasonbenn.nudge.runLatencyTest"),
+            object: nil, queue: .main
+        ) { [coordinator] _ in coordinator.runLatencyTest() }
         print("[Nudge] Wiring complete — watching for distractions")
     }
 

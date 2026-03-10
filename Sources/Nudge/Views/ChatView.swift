@@ -60,8 +60,7 @@ struct ChatView: View {
                         .font(.system(size: 14))
                         .focused($inputFocused)
                         .scrollContentBackground(.hidden)
-                        .frame(minHeight: 20, maxHeight: 80)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(height: 60)
                         .onKeyPress(.return, phases: .down) { event in
                             if event.modifiers.isEmpty {
                                 sendMessage()

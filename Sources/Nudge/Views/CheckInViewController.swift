@@ -1,0 +1,756 @@
+import AppKit
+
+// MARK: - CheckInViewController
+
+final class CheckInViewController: NSViewController {
+    private enum State {
+        case q1, q2, q3, done
+        case chat(_ phase: ChatPhase)
+    }
+    private enum ChatPhase { case trigger, replacement }
+
+    private let data: CheckInData
+    private unowned let coordinator: CheckInCoordinator
+    private let onComplete: (String, String, TabAction) -> Void
+    private let onDismiss: () -> Void
+
+    private var triggerResponse = ""
+    private var replacementResponse = ""
+    private var revisedReplacementOptions: [String]?
+    private var isLoadingQ2 = false
+
+    private weak var panel: FloatingPanel?
+    private let contentContainer = NSView()
+    private var currentChild: NSView?
+    private weak var chatViewRef: AppKitChatView?
+    private weak var q2ViewRef: Q2View?
+
+    init(data: CheckInData, coordinator: CheckInCoordinator,
+         onComplete: @escaping (String, String, TabAction) -> Void,
+         onDismiss: @escaping () -> Void) {
+        self.data = data
+        self.coordinator = coordinator
+        self.onComplete = onComplete
+        self.onDismiss = onDismiss
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func loadView() {
+        let root = NSVisualEffectView()
+        root.material = .hudWindow
+        root.blendingMode = .behindWindow
+        root.state = .active
+        root.wantsLayer = true
+        root.layer?.cornerRadius = 12
+        root.layer?.masksToBounds = true
+
+        let header = makeHeader()
+        let sep = makeSep()
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        root.addSubview(header)
+        root.addSubview(sep)
+        root.addSubview(contentContainer)
+
+        NSLayoutConstraint.activate([
+            root.widthAnchor.constraint(equalToConstant: 420),
+            header.topAnchor.constraint(equalTo: root.topAnchor),
+            header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            header.heightAnchor.constraint(equalToConstant: 44),
+            sep.topAnchor.constraint(equalTo: header.bottomAnchor),
+            sep.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sep.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            contentContainer.topAnchor.constraint(equalTo: sep.bottomAnchor),
+            contentContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+
+        self.view = root
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        panel = view.window as? FloatingPanel
+        transition(to: .q1)
+    }
+
+    private func makeHeader() -> NSView {
+        let header = NSView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: "Nudge")
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let closeBtn = NSButton()
+        closeBtn.bezelStyle = .inline
+        closeBtn.isBordered = false
+        closeBtn.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close")
+        closeBtn.contentTintColor = .secondaryLabelColor
+        closeBtn.target = self
+        closeBtn.action = #selector(closePanel)
+        closeBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        header.addSubview(label)
+        header.addSubview(closeBtn)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 20),
+            label.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            closeBtn.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -20),
+            closeBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            closeBtn.widthAnchor.constraint(equalToConstant: 20),
+            closeBtn.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        return header
+    }
+
+    @objc private func closePanel() { onDismiss() }
+
+    // MARK: - State Transitions
+
+    private func transition(to state: State) {
+        currentChild?.removeFromSuperview()
+
+        let child: NSView
+        switch state {
+        case .q1:
+            child = Q1View(
+                nudge: data.nudge,
+                options: data.trigger_options,
+                onSelect: { [weak self] opt in
+                    self?.triggerResponse = opt
+                    self?.coordinator.updateEvent(triggerSelection: opt)
+                    self?.transition(to: .q2)
+                },
+                onCustomSubmit: { [weak self] text in self?.submitCustomTrigger(text) }
+            )
+        case .q2:
+            let v = Q2View(
+                options: revisedReplacementOptions ?? data.replacement_options,
+                isLoading: isLoadingQ2,
+                onSelect: { [weak self] opt in
+                    self?.replacementResponse = opt
+                    self?.coordinator.updateEvent(replacementSelection: opt)
+                    self?.transition(to: .q3)
+                },
+                onCustomSubmit: { [weak self] text in self?.submitCustomReplacement(text) }
+            )
+            q2ViewRef = v
+            child = v
+        case .q3:
+            child = Q3View(onSelect: { [weak self] action in self?.completeWithTabAction(action) })
+        case .chat(let phase):
+            let v = AppKitChatView(
+                onSend: { [weak self] text in self?.coordinator.sendChatMessage(text) },
+                onDone: { [weak self] in self?.handleChatDone(phase: phase) }
+            )
+            chatViewRef = v
+            v.update(messages: coordinator.chatMessages, streamingText: coordinator.streamingText)
+            child = v
+        case .done:
+            child = DoneView(onClose: { [weak self] in self?.onDismiss() })
+        }
+
+        child.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.addSubview(child)
+        NSLayoutConstraint.activate([
+            child.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            child.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            child.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            child.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+        ])
+        currentChild = child
+        resizePanel(for: child)
+    }
+
+    private func resizePanel(for child: NSView) {
+        child.layoutSubtreeIfNeeded()
+        let totalH = min(44 + 1 + child.fittingSize.height, 700)
+        guard let p = panel else { return }
+        let r = p.frame
+        p.setFrame(NSRect(x: r.origin.x, y: r.origin.y, width: 420, height: max(totalH, 200)),
+                   display: true, animate: true)
+    }
+
+    // MARK: - Actions
+
+    private func submitCustomTrigger(_ text: String) {
+        triggerResponse = text
+        coordinator.updateEvent(triggerSelection: text)
+        coordinator.chatMessages = []
+        coordinator.streamingText = ""
+        coordinator.sendChatMessage(text)
+        transition(to: .chat(.trigger))
+    }
+
+    private func submitCustomReplacement(_ text: String) {
+        replacementResponse = text
+        coordinator.updateEvent(replacementSelection: text)
+        coordinator.chatMessages = []
+        coordinator.streamingText = ""
+        coordinator.sendChatMessage(text)
+        transition(to: .chat(.replacement))
+    }
+
+    private func completeWithTabAction(_ action: TabAction) {
+        transition(to: .done)
+        onComplete(triggerResponse, replacementResponse, action)
+    }
+
+    private func handleChatDone(phase: ChatPhase) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let summary = await self.coordinator.summarizeAndComplete()
+            switch phase {
+            case .trigger:
+                if !summary.isEmpty { self.triggerResponse = summary }
+                self.isLoadingQ2 = true
+                self.transition(to: .q2)
+                let revised = await self.coordinator.generateRevisedQ2(triggerSummary: self.triggerResponse)
+                self.isLoadingQ2 = false
+                if let revised {
+                    self.revisedReplacementOptions = revised
+                    self.q2ViewRef?.setOptions(revised)
+                }
+                self.q2ViewRef?.setLoading(false)
+                self.coordinator.chatMessages = []
+                self.coordinator.streamingText = ""
+            case .replacement:
+                if !summary.isEmpty { self.replacementResponse = summary }
+                self.transition(to: .q3)
+            }
+        }
+    }
+
+    // MARK: - Public
+
+    func chatStateChanged(messages: [ChatMessage], streamingText: String) {
+        chatViewRef?.update(messages: messages, streamingText: streamingText)
+    }
+}
+
+// MARK: - OptionNSButton
+
+private final class OptionNSButton: NSView {
+    private let action: () -> Void
+    private let label: NSTextField
+    private var isHovered = false
+
+    init(title: String, action: @escaping () -> Void) {
+        self.action = action
+        self.label = NSTextField(labelWithString: title)
+        super.init(frame: .zero)
+
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.borderWidth = 0.5
+        refreshColors()
+
+        label.font = .systemFont(ofSize: 14)
+        label.alignment = .left
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 0
+        label.preferredMaxLayoutWidth = 340
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+        ])
+
+        addTrackingArea(NSTrackingArea(rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self))
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func refreshColors() {
+        let bg = isHovered
+            ? NSColor.selectedControlColor.withAlphaComponent(0.3)
+            : NSColor.controlBackgroundColor
+        layer?.backgroundColor = bg.cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshColors()
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true;  refreshColors() }
+    override func mouseExited(with event: NSEvent)  { isHovered = false; refreshColors() }
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { action() }
+    }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+// MARK: - Q1View
+
+private final class Q1View: NSView, NSTextFieldDelegate {
+    private let onCustomSubmit: (String) -> Void
+    private let customField = NSTextField()
+
+    init(nudge: String, options: [String],
+         onSelect: @escaping (String) -> Void,
+         onCustomSubmit: @escaping (String) -> Void) {
+        self.onCustomSubmit = onCustomSubmit
+        super.init(frame: .zero)
+
+        let stack = vstack(spacing: 16)
+        stack.addArrangedSubview(bodyLabel(nudge))
+        stack.addArrangedSubview(secondaryLabel("What pulled you away?"))
+        stack.addArrangedSubview(optionButtons(options, onSelect: onSelect))
+        stack.addArrangedSubview(customRow(placeholder: "I'm avoiding feeling..."))
+
+        addSubview(stack)
+        pin(stack, insets: 20)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func customRow(placeholder: String) -> NSView {
+        customField.placeholderString = placeholder
+        customField.bezelStyle = .roundedBezel
+        customField.delegate = self
+        customField.translatesAutoresizingMaskIntoConstraints = false
+
+        let goBtn = NSButton(title: "Go", target: self, action: #selector(submitCustom))
+        goBtn.bezelStyle = .rounded
+        goBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = hstack(spacing: 8)
+        row.addArrangedSubview(customField)
+        row.addArrangedSubview(goBtn)
+        customField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return row
+    }
+
+    @objc private func submitCustom() {
+        let text = customField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        onCustomSubmit(text)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        if sel == #selector(insertNewline(_:)) { submitCustom(); return true }
+        return false
+    }
+}
+
+// MARK: - Q2View
+
+private final class Q2View: NSView, NSTextFieldDelegate {
+    private let onCustomSubmit: (String) -> Void
+    private var onSelect: (String) -> Void
+    private let customField = NSTextField()
+    private var optStack: NSStackView!
+    private let loadingView: NSStackView
+    private let spinner = NSProgressIndicator()
+
+    init(options: [String], isLoading: Bool,
+         onSelect: @escaping (String) -> Void,
+         onCustomSubmit: @escaping (String) -> Void) {
+        self.onSelect = onSelect
+        self.onCustomSubmit = onCustomSubmit
+        self.loadingView = vstack(spacing: 8)
+        super.init(frame: .zero)
+
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        loadingView.alignment = .centerX
+        loadingView.addArrangedSubview(spinner)
+        loadingView.addArrangedSubview(secondaryLabel("Thinking about what might help..."))
+        loadingView.isHidden = !isLoading
+        if isLoading { spinner.startAnimation(nil) }
+
+        optStack = optionButtons(options, onSelect: onSelect)
+
+        let stack = vstack(spacing: 16)
+        stack.addArrangedSubview(bodyLabel("What would you rather do instead?"))
+        stack.addArrangedSubview(loadingView)
+        stack.addArrangedSubview(optStack)
+        stack.addArrangedSubview(customRow(placeholder: "I'd rather..."))
+
+        addSubview(stack)
+        pin(stack, insets: 20)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func setOptions(_ newOptions: [String]) {
+        for v in optStack.arrangedSubviews { optStack.removeArrangedSubview(v); v.removeFromSuperview() }
+        for opt in newOptions {
+            let btn = OptionNSButton(title: opt) { [weak self] in self?.onSelect(opt) }
+            optStack.addArrangedSubview(btn)
+        }
+    }
+
+    func setLoading(_ loading: Bool) {
+        loadingView.isHidden = !loading
+        loading ? spinner.startAnimation(nil) : spinner.stopAnimation(nil)
+    }
+
+    private func customRow(placeholder: String) -> NSView {
+        customField.placeholderString = placeholder
+        customField.bezelStyle = .roundedBezel
+        customField.delegate = self
+        customField.translatesAutoresizingMaskIntoConstraints = false
+
+        let goBtn = NSButton(title: "Go", target: self, action: #selector(submitCustom))
+        goBtn.bezelStyle = .rounded
+        goBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = hstack(spacing: 8)
+        row.addArrangedSubview(customField)
+        row.addArrangedSubview(goBtn)
+        customField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return row
+    }
+
+    @objc private func submitCustom() {
+        let text = customField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        onCustomSubmit(text)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        if sel == #selector(insertNewline(_:)) { submitCustom(); return true }
+        return false
+    }
+}
+
+// MARK: - Q3View
+
+private final class Q3View: NSView {
+    init(onSelect: @escaping (TabAction) -> Void) {
+        super.init(frame: .zero)
+
+        let choices: [(String, TabAction)] = [
+            ("Close all distracting tabs now", .closeAll),
+            ("Close all tabs except the current one", .closeAllButCurrent),
+            ("Close them in 5 minutes", .closeInFiveMinutes),
+            ("Leave them open", .leaveOpen),
+        ]
+
+        let opts = vstack(spacing: 8)
+        for (title, action) in choices {
+            opts.addArrangedSubview(OptionNSButton(title: title) { onSelect(action) })
+        }
+
+        let stack = vstack(spacing: 16)
+        stack.addArrangedSubview(bodyLabel("What about those distracting tabs?"))
+        stack.addArrangedSubview(opts)
+
+        addSubview(stack)
+        pin(stack, insets: 20)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+// MARK: - AppKitChatView
+
+private final class AppKitChatView: NSView, NSTextFieldDelegate {
+    private let onSend: (String) -> Void
+    private let onDone: () -> Void
+
+    private let scrollView = NSScrollView()
+    private let bubbleStack: NSStackView
+    private let inputField = NSTextField()
+
+    private var displayedCount = 0
+    private var streamingLabel: NSTextField?
+    private var streamingRow: NSView?
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 420, height: 350) }
+
+    init(onSend: @escaping (String) -> Void, onDone: @escaping () -> Void) {
+        self.onSend = onSend
+        self.onDone = onDone
+        self.bubbleStack = vstack(spacing: 10)
+        super.init(frame: .zero)
+        setup()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func setup() {
+        // Scroll view + bubble stack
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let docView = NSView()
+        docView.translatesAutoresizingMaskIntoConstraints = false
+        bubbleStack.alignment = .width
+        docView.addSubview(bubbleStack)
+        NSLayoutConstraint.activate([
+            bubbleStack.topAnchor.constraint(equalTo: docView.topAnchor, constant: 12),
+            bubbleStack.leadingAnchor.constraint(equalTo: docView.leadingAnchor, constant: 16),
+            bubbleStack.trailingAnchor.constraint(equalTo: docView.trailingAnchor, constant: -16),
+            bubbleStack.bottomAnchor.constraint(equalTo: docView.bottomAnchor, constant: -12),
+        ])
+        scrollView.documentView = docView
+
+        // Input area
+        inputField.placeholderString = "Reply..."
+        inputField.bezelStyle = .roundedBezel
+        inputField.delegate = self
+        inputField.translatesAutoresizingMaskIntoConstraints = false
+
+        let sendBtn = NSButton(title: "Send", target: self, action: #selector(sendMessage))
+        sendBtn.bezelStyle = .inline
+        sendBtn.isBordered = false
+        sendBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        let inputRow = hstack(spacing: 10)
+        inputRow.addArrangedSubview(inputField)
+        inputRow.addArrangedSubview(sendBtn)
+        inputField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        // Done button
+        let doneBtn = NSButton(title: "Done", target: self, action: #selector(doneTapped))
+        doneBtn.bezelStyle = .inline
+        doneBtn.isBordered = false
+        doneBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        let sep1 = makeSep()
+        let sep2 = makeSep()
+
+        [scrollView, sep1, inputRow, sep2, doneBtn].forEach { addSubview($0) }
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            docView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            sep1.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            sep1.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sep1.trailingAnchor.constraint(equalTo: trailingAnchor),
+            inputRow.topAnchor.constraint(equalTo: sep1.bottomAnchor, constant: 8),
+            inputRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            inputRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            inputField.heightAnchor.constraint(equalToConstant: 34),
+            sep2.topAnchor.constraint(equalTo: inputRow.bottomAnchor, constant: 8),
+            sep2.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sep2.trailingAnchor.constraint(equalTo: trailingAnchor),
+            doneBtn.topAnchor.constraint(equalTo: sep2.bottomAnchor, constant: 10),
+            doneBtn.centerXAnchor.constraint(equalTo: centerXAnchor),
+            doneBtn.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+        ])
+    }
+
+    @objc private func sendMessage() {
+        let text = inputField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        inputField.stringValue = ""
+        onSend(text)
+    }
+
+    @objc private func doneTapped() { onDone() }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        if sel == #selector(insertNewline(_:)) { sendMessage(); return true }
+        return false
+    }
+
+    // MARK: - Message Updates
+
+    func update(messages: [ChatMessage], streamingText: String) {
+        while displayedCount < messages.count {
+            removeStreamingBubble()
+            addBubble(messages[displayedCount])
+            displayedCount += 1
+        }
+
+        if streamingText.isEmpty {
+            removeStreamingBubble()
+        } else if let lbl = streamingLabel {
+            lbl.stringValue = streamingText
+        } else {
+            let (row, lbl) = bubbleRow(text: streamingText, isUser: false)
+            bubbleStack.addArrangedSubview(row)
+            streamingRow = row
+            streamingLabel = lbl
+        }
+
+        scrollToBottom()
+    }
+
+    private func addBubble(_ msg: ChatMessage) {
+        let (row, _) = bubbleRow(text: msg.content, isUser: msg.role == .user)
+        bubbleStack.addArrangedSubview(row)
+    }
+
+    private func removeStreamingBubble() {
+        streamingRow?.removeFromSuperview()
+        streamingRow = nil
+        streamingLabel = nil
+    }
+
+    private func bubbleRow(text: String, isUser: Bool) -> (NSView, NSTextField) {
+        let bubble = NSView()
+        bubble.wantsLayer = true
+        bubble.layer?.cornerRadius = 12
+        bubble.layer?.backgroundColor = isUser
+            ? NSColor.controlAccentColor.cgColor
+            : NSColor.controlBackgroundColor.cgColor
+        bubble.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: 14)
+        label.textColor = isUser ? .white : .labelColor
+        label.preferredMaxLayoutWidth = 280
+        label.translatesAutoresizingMaskIntoConstraints = false
+        bubble.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 8),
+            label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -8),
+            label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -12),
+        ])
+
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+
+        let row = hstack(spacing: 0)
+        if isUser { row.addArrangedSubview(spacer); row.addArrangedSubview(bubble) }
+        else       { row.addArrangedSubview(bubble); row.addArrangedSubview(spacer) }
+
+        return (row, label)
+    }
+
+    private func scrollToBottom() {
+        guard let doc = scrollView.documentView else { return }
+        let bottom = NSPoint(x: 0, y: max(0, doc.frame.height - scrollView.contentView.bounds.height))
+        scrollView.contentView.scroll(to: bottom)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+}
+
+// MARK: - DoneView
+
+private final class DoneView: NSView {
+    private let closeTarget: ActionTarget
+
+    init(onClose: @escaping () -> Void) {
+        self.closeTarget = ActionTarget(action: onClose)
+        super.init(frame: .zero)
+
+        let imageView = NSImageView()
+        if let base = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil) {
+            imageView.image = base.withSymbolConfiguration(.init(pointSize: 48, weight: .regular))
+        }
+        imageView.contentTintColor = .systemGreen
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+
+        let title    = NSTextField(labelWithString: "Good awareness!")
+        title.font   = .systemFont(ofSize: 17, weight: .semibold)
+        title.alignment = .center
+
+        let subtitle    = NSTextField(labelWithString: "You've got this.")
+        subtitle.font   = .systemFont(ofSize: 14)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.alignment = .center
+
+        let closeBtn = NSButton(title: "Close", target: closeTarget, action: #selector(ActionTarget.fire))
+        closeBtn.bezelStyle = .rounded
+        closeBtn.keyEquivalent = "\r"
+        closeBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = vstack(spacing: 16)
+        stack.alignment = .centerX
+        [imageView, title, subtitle, closeBtn].forEach { stack.addArrangedSubview($0) }
+        stack.setCustomSpacing(8, after: title)
+
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 40),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -40),
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            imageView.widthAnchor.constraint(equalToConstant: 48),
+            imageView.heightAnchor.constraint(equalToConstant: 48),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+// MARK: - Helpers
+
+/// Allows NSButton to call a Swift closure as its action target.
+private final class ActionTarget: NSObject {
+    private let action: () -> Void
+    init(action: @escaping () -> Void) { self.action = action }
+    @objc func fire() { action() }
+}
+
+private func vstack(spacing: CGFloat) -> NSStackView {
+    let s = NSStackView()
+    s.orientation = .vertical
+    s.alignment = .width
+    s.spacing = spacing
+    s.translatesAutoresizingMaskIntoConstraints = false
+    return s
+}
+
+private func hstack(spacing: CGFloat) -> NSStackView {
+    let s = NSStackView()
+    s.orientation = .horizontal
+    s.alignment = .centerY
+    s.spacing = spacing
+    s.translatesAutoresizingMaskIntoConstraints = false
+    return s
+}
+
+private func bodyLabel(_ text: String) -> NSTextField {
+    let f = NSTextField(wrappingLabelWithString: text)
+    f.font = .systemFont(ofSize: 15, weight: .medium)
+    f.textColor = .labelColor
+    f.preferredMaxLayoutWidth = 380
+    return f
+}
+
+private func secondaryLabel(_ text: String) -> NSTextField {
+    let f = NSTextField(labelWithString: text)
+    f.font = .systemFont(ofSize: 13)
+    f.textColor = .secondaryLabelColor
+    return f
+}
+
+private func optionButtons(_ options: [String], onSelect: @escaping (String) -> Void) -> NSStackView {
+    let stack = vstack(spacing: 8)
+    for opt in options {
+        stack.addArrangedSubview(OptionNSButton(title: opt) { onSelect(opt) })
+    }
+    return stack
+}
+
+private func makeSep() -> NSBox {
+    let sep = NSBox()
+    sep.boxType = .separator
+    sep.translatesAutoresizingMaskIntoConstraints = false
+    return sep
+}
+
+private func pin(_ view: NSView, to parent: NSView? = nil, insets: CGFloat) {
+    let p = parent ?? view.superview!
+    NSLayoutConstraint.activate([
+        view.topAnchor.constraint(equalTo: p.topAnchor, constant: insets),
+        view.bottomAnchor.constraint(equalTo: p.bottomAnchor, constant: -insets),
+        view.leadingAnchor.constraint(equalTo: p.leadingAnchor, constant: insets),
+        view.trailingAnchor.constraint(equalTo: p.trailingAnchor, constant: -insets),
+    ])
+}

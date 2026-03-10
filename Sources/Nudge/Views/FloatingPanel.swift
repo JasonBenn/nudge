@@ -1,6 +1,16 @@
 import AppKit
 import SwiftUI
 
+private final class InstrumentedHostingView: NSHostingView<AnyView> {
+    override func layout() {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        super.layout()
+        let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+        if ms > 8 { print("[HostingView] ⚠️ slow layout: \(String(format: "%.1f", ms))ms") }
+        InputLatencyMonitor.shared.recordLayout()
+    }
+}
+
 class FloatingPanel: NSPanel {
     private var hostingView: NSHostingView<AnyView>?
 
@@ -22,7 +32,7 @@ class FloatingPanel: NSPanel {
     }
 
     func show<Content: View>(_ view: Content) {
-        let hosting = NSHostingView(rootView: AnyView(view))
+        let hosting = InstrumentedHostingView(rootView: AnyView(view))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         let wrapper = NSView()
         wrapper.addSubview(hosting)
@@ -43,6 +53,27 @@ class FloatingPanel: NSPanel {
             width: max(fittingSize.width, 420),
             height: min(fittingSize.height, 700)
         )
+        setFrame(newFrame, display: true)
+        center()
+        makeKeyAndOrderFront(nil)
+    }
+
+    func show(viewController vc: NSViewController) {
+        let view = vc.view
+        view.translatesAutoresizingMaskIntoConstraints = false
+        let wrapper = NSView()
+        wrapper.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: wrapper.topAnchor),
+            view.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+        ])
+        contentView = wrapper
+        view.layoutSubtreeIfNeeded()
+        let h = min(view.fittingSize.height, 700)
+        let newFrame = NSRect(x: frame.origin.x, y: frame.origin.y,
+                              width: 420, height: max(h, 200))
         setFrame(newFrame, display: true)
         center()
         makeKeyAndOrderFront(nil)

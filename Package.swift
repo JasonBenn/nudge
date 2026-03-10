@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "Nudge",
             path: "Sources/Nudge"
+        ),
+        .testTarget(
+            name: "NudgeTests",
+            dependencies: ["Nudge"],
+            path: "Tests/NudgeTests"
         )
     ]
 )

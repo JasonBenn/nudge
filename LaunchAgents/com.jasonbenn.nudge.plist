@@ -6,7 +6,7 @@
     <string>com.jasonbenn.nudge</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/jasonbenn/code/nudge/.build/debug/Nudge</string>
+        <string>/Users/jasonbenn/code/nudge/.build/release/Nudge</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
