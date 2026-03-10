@@ -59,17 +59,8 @@ class FloatingPanel: NSPanel {
     }
 
     func show(viewController vc: NSViewController) {
+        contentViewController = vc
         let view = vc.view
-        view.translatesAutoresizingMaskIntoConstraints = false
-        let wrapper = NSView()
-        wrapper.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.topAnchor.constraint(equalTo: wrapper.topAnchor),
-            view.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
-            view.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-        ])
-        contentView = wrapper
         view.layoutSubtreeIfNeeded()
         let h = min(view.fittingSize.height, 700)
         let newFrame = NSRect(x: frame.origin.x, y: frame.origin.y,
@@ -82,6 +73,7 @@ class FloatingPanel: NSPanel {
     func dismiss() {
         orderOut(nil)
         hostingView = nil
+        contentViewController = nil
         contentView = nil
     }
 }

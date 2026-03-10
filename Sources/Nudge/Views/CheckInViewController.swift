@@ -265,6 +265,9 @@ private final class OptionNSButton: NSView {
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
         ])
 
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+
         addTrackingArea(NSTrackingArea(rect: .zero,
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
             owner: self))
@@ -295,9 +298,10 @@ private final class OptionNSButton: NSView {
 
 // MARK: - Q1View
 
-private final class Q1View: NSView, NSTextFieldDelegate {
+private final class Q1View: NSView {
     private let onCustomSubmit: (String) -> Void
-    private let customField = NSTextField()
+    private var textInput: GrowingTextInput!
+    private var goTarget: ActionTarget!
 
     init(nudge: String, options: [String],
          onSelect: @escaping (String) -> Void,
@@ -306,10 +310,16 @@ private final class Q1View: NSView, NSTextFieldDelegate {
         super.init(frame: .zero)
 
         let stack = vstack(spacing: 16)
-        stack.addArrangedSubview(bodyLabel(nudge))
-        stack.addArrangedSubview(secondaryLabel("What pulled you away?"))
-        stack.addArrangedSubview(optionButtons(options, onSelect: onSelect))
-        stack.addArrangedSubview(customRow(placeholder: "I'm avoiding feeling..."))
+        let views: [NSView] = [
+            bodyLabel(nudge),
+            secondaryLabel("What pulled you away?"),
+            optionButtons(options, onSelect: onSelect),
+            customRow(placeholder: "I'm avoiding feeling..."),
+        ]
+        for v in views {
+            stack.addArrangedSubview(v)
+            fillWidth(v, in: stack)
+        }
 
         addSubview(stack)
         pin(stack, insets: 20)
@@ -318,40 +328,33 @@ private final class Q1View: NSView, NSTextFieldDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     private func customRow(placeholder: String) -> NSView {
-        customField.placeholderString = placeholder
-        customField.bezelStyle = .roundedBezel
-        customField.delegate = self
-        customField.translatesAutoresizingMaskIntoConstraints = false
+        textInput = GrowingTextInput(placeholder: placeholder, onSubmit: { [weak self] text in
+            self?.onCustomSubmit(text)
+        })
 
-        let goBtn = NSButton(title: "Go", target: self, action: #selector(submitCustom))
+        goTarget = ActionTarget { [weak self] in
+            guard let self, !self.textInput.text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+            self.onCustomSubmit(self.textInput.text.trimmingCharacters(in: .whitespaces))
+        }
+        let goBtn = NSButton(title: "Go", target: goTarget, action: #selector(ActionTarget.fire))
         goBtn.bezelStyle = .rounded
         goBtn.translatesAutoresizingMaskIntoConstraints = false
 
         let row = hstack(spacing: 8)
-        row.addArrangedSubview(customField)
+        row.addArrangedSubview(textInput)
         row.addArrangedSubview(goBtn)
-        customField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textInput.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return row
-    }
-
-    @objc private func submitCustom() {
-        let text = customField.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-        onCustomSubmit(text)
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
-        if sel == #selector(insertNewline(_:)) { submitCustom(); return true }
-        return false
     }
 }
 
 // MARK: - Q2View
 
-private final class Q2View: NSView, NSTextFieldDelegate {
+private final class Q2View: NSView {
     private let onCustomSubmit: (String) -> Void
     private var onSelect: (String) -> Void
-    private let customField = NSTextField()
+    private var textInput: GrowingTextInput!
+    private var goTarget: ActionTarget!
     private var optStack: NSStackView!
     private let loadingView: NSStackView
     private let spinner = NSProgressIndicator()
@@ -376,10 +379,16 @@ private final class Q2View: NSView, NSTextFieldDelegate {
         optStack = optionButtons(options, onSelect: onSelect)
 
         let stack = vstack(spacing: 16)
-        stack.addArrangedSubview(bodyLabel("What would you rather do instead?"))
-        stack.addArrangedSubview(loadingView)
-        stack.addArrangedSubview(optStack)
-        stack.addArrangedSubview(customRow(placeholder: "I'd rather..."))
+        let views: [NSView] = [
+            bodyLabel("What would you rather do instead?"),
+            loadingView,
+            optStack,
+            customRow(placeholder: "I'd rather..."),
+        ]
+        for v in views {
+            stack.addArrangedSubview(v)
+            fillWidth(v, in: stack)
+        }
 
         addSubview(stack)
         pin(stack, insets: 20)
@@ -392,6 +401,7 @@ private final class Q2View: NSView, NSTextFieldDelegate {
         for opt in newOptions {
             let btn = OptionNSButton(title: opt) { [weak self] in self?.onSelect(opt) }
             optStack.addArrangedSubview(btn)
+            fillWidth(btn, in: optStack)
         }
     }
 
@@ -401,31 +411,23 @@ private final class Q2View: NSView, NSTextFieldDelegate {
     }
 
     private func customRow(placeholder: String) -> NSView {
-        customField.placeholderString = placeholder
-        customField.bezelStyle = .roundedBezel
-        customField.delegate = self
-        customField.translatesAutoresizingMaskIntoConstraints = false
+        textInput = GrowingTextInput(placeholder: placeholder, onSubmit: { [weak self] text in
+            self?.onCustomSubmit(text)
+        })
 
-        let goBtn = NSButton(title: "Go", target: self, action: #selector(submitCustom))
+        goTarget = ActionTarget { [weak self] in
+            guard let self, !self.textInput.text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+            self.onCustomSubmit(self.textInput.text.trimmingCharacters(in: .whitespaces))
+        }
+        let goBtn = NSButton(title: "Go", target: goTarget, action: #selector(ActionTarget.fire))
         goBtn.bezelStyle = .rounded
         goBtn.translatesAutoresizingMaskIntoConstraints = false
 
         let row = hstack(spacing: 8)
-        row.addArrangedSubview(customField)
+        row.addArrangedSubview(textInput)
         row.addArrangedSubview(goBtn)
-        customField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textInput.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return row
-    }
-
-    @objc private func submitCustom() {
-        let text = customField.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-        onCustomSubmit(text)
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
-        if sel == #selector(insertNewline(_:)) { submitCustom(); return true }
-        return false
     }
 }
 
@@ -444,12 +446,17 @@ private final class Q3View: NSView {
 
         let opts = vstack(spacing: 8)
         for (title, action) in choices {
-            opts.addArrangedSubview(OptionNSButton(title: title) { onSelect(action) })
+            let btn = OptionNSButton(title: title) { onSelect(action) }
+            opts.addArrangedSubview(btn)
+            fillWidth(btn, in: opts)
         }
 
         let stack = vstack(spacing: 16)
-        stack.addArrangedSubview(bodyLabel("What about those distracting tabs?"))
-        stack.addArrangedSubview(opts)
+        let views: [NSView] = [bodyLabel("What about those distracting tabs?"), opts]
+        for v in views {
+            stack.addArrangedSubview(v)
+            fillWidth(v, in: stack)
+        }
 
         addSubview(stack)
         pin(stack, insets: 20)
@@ -688,6 +695,109 @@ private final class DoneView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+// MARK: - GrowingTextInput
+
+/// A multi-line text input that grows vertically as text wraps, up to a max height.
+private final class GrowingTextInput: NSView, NSTextViewDelegate {
+    private let scrollView = NSScrollView()
+    private let textView = NSTextView()
+    private let placeholderLabel: NSTextField
+    private let onSubmit: (String) -> Void
+    private var heightConstraint: NSLayoutConstraint!
+    private let minHeight: CGFloat = 34
+    private let maxHeight: CGFloat = 120
+
+    var text: String { textView.string }
+
+    init(placeholder: String, onSubmit: @escaping (String) -> Void) {
+        self.onSubmit = onSubmit
+        self.placeholderLabel = NSTextField(labelWithString: placeholder)
+        super.init(frame: .zero)
+
+        wantsLayer = true
+        layer?.cornerRadius = 5
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+
+        scrollView.hasVerticalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        textView.isRichText = false
+        textView.font = .systemFont(ofSize: 14)
+        textView.textColor = .labelColor
+        textView.backgroundColor = .clear
+        textView.delegate = self
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.lineFragmentPadding = 4
+        textView.textContainerInset = NSSize(width: 4, height: 6)
+
+        scrollView.documentView = textView
+
+        placeholderLabel.font = .systemFont(ofSize: 14)
+        placeholderLabel.textColor = .placeholderTextColor
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        placeholderLabel.isSelectable = false
+
+        addSubview(scrollView)
+        addSubview(placeholderLabel)
+
+        heightConstraint = heightAnchor.constraint(equalToConstant: minHeight)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            placeholderLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            placeholderLabel.centerYAnchor.constraint(equalTo: topAnchor, constant: minHeight / 2),
+            heightConstraint,
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        updateHeight()
+    }
+
+    func textDidChange(_ notification: Notification) {
+        placeholderLabel.isHidden = !textView.string.isEmpty
+        updateHeight()
+    }
+
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(insertNewline(_:)) {
+            let text = textView.string.trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty else { return true }
+            onSubmit(text)
+            return true
+        }
+        return false
+    }
+
+    private func updateHeight() {
+        guard let container = textView.textContainer, let manager = textView.layoutManager else { return }
+        manager.ensureLayout(for: container)
+        let textHeight = manager.usedRect(for: container).height + textView.textContainerInset.height * 2
+        let newHeight = min(max(textHeight, minHeight), maxHeight)
+        if heightConstraint.constant != newHeight {
+            heightConstraint.constant = newHeight
+            scrollView.hasVerticalScroller = textHeight > maxHeight
+            invalidateIntrinsicContentSize()
+            // Ask the panel to resize
+            if let vc = window?.contentViewController as? CheckInViewController {
+                vc.view.needsLayout = true
+            }
+        }
+    }
+}
+
 // MARK: - Helpers
 
 /// Allows NSButton to call a Swift closure as its action target.
@@ -700,10 +810,15 @@ private final class ActionTarget: NSObject {
 private func vstack(spacing: CGFloat) -> NSStackView {
     let s = NSStackView()
     s.orientation = .vertical
-    s.alignment = .width
+    s.alignment = .leading
     s.spacing = spacing
     s.translatesAutoresizingMaskIntoConstraints = false
     return s
+}
+
+/// Adds a fill-width constraint for a view inside a stack
+private func fillWidth(_ view: NSView, in stack: NSStackView) {
+    view.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
 }
 
 private func hstack(spacing: CGFloat) -> NSStackView {
@@ -733,7 +848,9 @@ private func secondaryLabel(_ text: String) -> NSTextField {
 private func optionButtons(_ options: [String], onSelect: @escaping (String) -> Void) -> NSStackView {
     let stack = vstack(spacing: 8)
     for opt in options {
-        stack.addArrangedSubview(OptionNSButton(title: opt) { onSelect(opt) })
+        let btn = OptionNSButton(title: opt) { onSelect(opt) }
+        stack.addArrangedSubview(btn)
+        fillWidth(btn, in: stack)
     }
     return stack
 }
