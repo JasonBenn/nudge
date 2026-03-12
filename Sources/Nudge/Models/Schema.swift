@@ -28,6 +28,7 @@ struct Interaction: Codable {
     var replacementSelection: String
     var tabAction: String
     var conversation: [ConversationMessage]
+    var completedAt: Date?
 
     struct ConversationMessage: Codable {
         var role: String

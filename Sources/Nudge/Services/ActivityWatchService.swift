@@ -38,6 +38,13 @@ struct AWRule: Decodable {
     let ignore_case: Bool?
 }
 
+/// A compiled AW category with its top-level group and regex.
+struct CompiledCategory {
+    let group: String  // e.g. "Distraction", "Communication", "Work"
+    let name: String   // e.g. "Distraction > Social Media"
+    let regex: NSRegularExpression
+}
+
 enum ActivityWatchService {
     /// Fetch all bucket IDs from the AW API.
     static func listBuckets() async -> [String] {
@@ -77,26 +84,26 @@ enum ActivityWatchService {
         return best
     }
 
-    /// Fetch AW settings and extract distraction regexes.
-    /// Returns compiled NSRegularExpression objects for all "Distraction" subcategories.
-    static func fetchDistractionPatterns() async -> [NSRegularExpression] {
+    /// Fetch all AW category patterns, compiled and grouped by top-level category.
+    static func fetchAllCategories() async -> [CompiledCategory] {
         guard let url = URL(string: "\(Config.awBase)/0/settings") else { return [] }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let settings = try JSONDecoder().decode(AWSettings.self, from: data)
-            var patterns: [NSRegularExpression] = []
+            var categories: [CompiledCategory] = []
             for category in settings.classes {
-                guard category.name.first == "Distraction",
+                guard let group = category.name.first,
                       category.rule.type == "regex",
                       let regex = category.rule.regex else { continue }
                 let options: NSRegularExpression.Options = category.rule.ignore_case == true ? [.caseInsensitive] : []
                 if let compiled = try? NSRegularExpression(pattern: regex, options: options) {
-                    patterns.append(compiled)
-                    print("[AW] Loaded distraction pattern: \(category.name.joined(separator: " > "))")
+                    let name = category.name.joined(separator: " > ")
+                    categories.append(CompiledCategory(group: group, name: name, regex: compiled))
+                    print("[AW] Loaded category: \(name)")
                 }
             }
-            print("[AW] Loaded \(patterns.count) distraction patterns from ActivityWatch")
-            return patterns
+            print("[AW] Loaded \(categories.count) categories from ActivityWatch")
+            return categories
         } catch {
             print("[AW] Failed to fetch settings: \(error)")
             return []

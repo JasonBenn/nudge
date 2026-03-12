@@ -242,7 +242,12 @@ final class CheckInCoordinator {
 
         if let t = triggerSelection { interaction.triggerSelection = t }
         if let r = replacementSelection { interaction.replacementSelection = r }
-        if let a = tabAction { interaction.tabAction = a }
+        if let a = tabAction {
+            interaction.tabAction = a
+            interaction.completedAt = Date()
+            let responseTime = Date().timeIntervalSince(event.timestamp)
+            print("[Nudge] Check-in \(a) after \(String(format: "%.0f", responseTime))s")
+        }
 
         interaction.conversation = chatMessages.map {
             Interaction.ConversationMessage(role: $0.role == .user ? "user" : "assistant", content: $0.content)

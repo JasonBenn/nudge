@@ -10,12 +10,16 @@ final class DistractionDetector {
     /// Called on the main actor when a fresh distraction is detected.
     var onDistraction: ((String, String) -> Void)?
 
-    /// Compiled distraction patterns from AW settings. Shared with CheckInCoordinator for tab closing.
-    private(set) var distractionPatterns: [NSRegularExpression] = []
+    /// All compiled AW categories, used for classification. Distraction patterns exposed for tab closing.
+    private(set) var categories: [CompiledCategory] = []
+    var distractionPatterns: [NSRegularExpression] {
+        categories.filter { $0.group == "Distraction" }.map(\.regex)
+    }
 
     private var bucketId: String?
     private var lastEventTimestamp: String?
     private var lastTriggerTime: Date = .distantPast
+    private var lastTriggeredURL: String = ""
     private var lastURLWasDistracting = false
     private var pollingTask: Task<Void, Never>?
 
@@ -24,9 +28,8 @@ final class DistractionDetector {
     func startPolling() {
         pollingTask?.cancel()
         pollingTask = Task { [weak self] in
-            // Load distraction patterns from AW on first poll
             if let self {
-                self.distractionPatterns = await ActivityWatchService.fetchDistractionPatterns()
+                self.categories = await ActivityWatchService.fetchAllCategories()
             }
 
             while !Task.isCancelled {
@@ -58,17 +61,23 @@ final class DistractionDetector {
         if ts == lastEventTimestamp { return }
         lastEventTimestamp = ts
 
-        // Match against both URL and title, like AW does
+        // Classify using AW categories — first match wins.
+        // Only trigger if the first matching category is "Distraction".
         let matchText = "\(url) \(title)"
-        let currentlyDistracting = isDistracting(matchText)
-        let isFresh = currentlyDistracting && !lastURLWasDistracting
+        let currentlyDistracting = classify(matchText) == "Distraction"
+        let wasPreviouslyDistracting = lastURLWasDistracting
         lastURLWasDistracting = currentlyDistracting
 
-        guard isFresh else { return }
+        guard currentlyDistracting else { return }
+
+        let isFresh = !wasPreviouslyDistracting
 
         let elapsed = Date().timeIntervalSince(lastTriggerTime)
-        guard elapsed >= Config.rateLimitSeconds else {
-            let remaining = Int(Config.rateLimitSeconds - elapsed)
+        let sameURL = url == lastTriggeredURL
+        let cooldownSeconds: TimeInterval = sameURL ? 600 : 60
+        guard isFresh || (!sameURL && elapsed >= cooldownSeconds) else { return }
+        guard elapsed >= cooldownSeconds else {
+            let remaining = Int(cooldownSeconds - elapsed)
             print("[Nudge] Rate limited — \(remaining)s until next trigger. Site: \(url)")
             return
         }
@@ -77,6 +86,7 @@ final class DistractionDetector {
         lastDetectedURL = url
         lastDetectedTitle = title
         lastTriggerTime = Date()
+        lastTriggeredURL = url
 
         let capturedURL = url
         let capturedTitle = title
@@ -85,9 +95,27 @@ final class DistractionDetector {
         }
     }
 
-    func isDistracting(_ text: String) -> Bool {
+    /// Classify text against all AW categories. Returns the top-level group of the first match,
+    /// or nil if nothing matches. Non-Distraction categories are checked first so they take priority.
+    func classify(_ text: String) -> String? {
         let range = NSRange(text.startIndex..., in: text)
-        return distractionPatterns.contains { $0.firstMatch(in: text, range: range) != nil }
+        // Check non-Distraction categories first — they act as an allowlist
+        for cat in categories where cat.group != "Distraction" {
+            if cat.regex.firstMatch(in: text, range: range) != nil {
+                return cat.group
+            }
+        }
+        for cat in categories where cat.group == "Distraction" {
+            if cat.regex.firstMatch(in: text, range: range) != nil {
+                return "Distraction"
+            }
+        }
+        return nil
+    }
+
+    /// Check if text matches any distraction pattern (used by tab closer).
+    func isDistracting(_ text: String) -> Bool {
+        classify(text) == "Distraction"
     }
 
     deinit {
