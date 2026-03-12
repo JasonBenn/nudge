@@ -94,7 +94,10 @@ final class CheckInCoordinator {
                 self?.handleTabAction(tabAction)
                 self?.dismissPanel()
             },
-            onDismiss: { [weak self] in self?.dismissPanel() }
+            onDismiss: { [weak self] in
+                self?.updateEvent(tabAction: "dismissed")
+                self?.dismissPanel()
+            }
         )
         onChatStateChanged = { [weak vc] messages, streaming in
             vc?.chatStateChanged(messages: messages, streamingText: streaming)
