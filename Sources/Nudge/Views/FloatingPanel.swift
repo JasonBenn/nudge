@@ -17,7 +17,7 @@ class FloatingPanel: NSPanel {
     init(contentRect: NSRect = NSRect(x: 0, y: 0, width: 420, height: 500)) {
         super.init(
             contentRect: contentRect,
-            styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
+            styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )

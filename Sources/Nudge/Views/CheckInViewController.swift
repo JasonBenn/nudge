@@ -3,12 +3,11 @@ import AppKit
 // MARK: - CheckInViewController
 
 final class CheckInViewController: NSViewController {
-    private enum State {
+    private enum State: Equatable {
         case q1, q2, q3, done
         case chat(_ phase: ChatPhase)
     }
-    private enum ChatPhase { case trigger, replacement }
-
+    private enum ChatPhase: Equatable { case trigger, replacement }
     private let data: CheckInData
     private unowned let coordinator: CheckInCoordinator
     private let onComplete: (String, String, TabAction) -> Void
@@ -19,11 +18,13 @@ final class CheckInViewController: NSViewController {
     private var revisedReplacementOptions: [String]?
     private var isLoadingQ2 = false
 
+    private var currentState: State = .q1
     private weak var panel: FloatingPanel?
     private let contentContainer = NSView()
     private var currentChild: NSView?
     private weak var chatViewRef: AppKitChatView?
     private weak var q2ViewRef: Q2View?
+    private weak var backButton: NSButton?
 
     init(data: CheckInData, coordinator: CheckInCoordinator,
          onComplete: @escaping (String, String, TabAction) -> Void,
@@ -82,6 +83,17 @@ final class CheckInViewController: NSViewController {
         let header = NSView()
         header.translatesAutoresizingMaskIntoConstraints = false
 
+        let backBtn = NSButton()
+        backBtn.bezelStyle = .inline
+        backBtn.isBordered = false
+        backBtn.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")
+        backBtn.contentTintColor = .secondaryLabelColor
+        backBtn.target = self
+        backBtn.action = #selector(goBack)
+        backBtn.translatesAutoresizingMaskIntoConstraints = false
+        backBtn.isHidden = true
+        self.backButton = backBtn
+
         let label = NSTextField(labelWithString: "Nudge")
         label.font = .systemFont(ofSize: 13, weight: .semibold)
         label.textColor = .secondaryLabelColor
@@ -96,10 +108,15 @@ final class CheckInViewController: NSViewController {
         closeBtn.action = #selector(closePanel)
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
 
+        header.addSubview(backBtn)
         header.addSubview(label)
         header.addSubview(closeBtn)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 20),
+            backBtn.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),
+            backBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            backBtn.widthAnchor.constraint(equalToConstant: 20),
+            backBtn.heightAnchor.constraint(equalToConstant: 20),
+            label.centerXAnchor.constraint(equalTo: header.centerXAnchor),
             label.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             closeBtn.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -20),
             closeBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
@@ -111,10 +128,30 @@ final class CheckInViewController: NSViewController {
 
     @objc private func closePanel() { onDismiss() }
 
+    @objc private func goBack() {
+        switch currentState {
+        case .q2:
+            transition(to: .q1)
+        case .q3:
+            transition(to: .q2)
+        case .chat(let phase):
+            coordinator.chatMessages = []
+            coordinator.streamingText = ""
+            switch phase {
+            case .trigger: transition(to: .q1)
+            case .replacement: transition(to: .q2)
+            }
+        default:
+            break
+        }
+    }
+
     // MARK: - State Transitions
 
     private func transition(to state: State) {
+        currentState = state
         currentChild?.removeFromSuperview()
+        backButton?.isHidden = (state == .q1 || state == .done)
 
         let child: NSView
         switch state {
@@ -168,13 +205,22 @@ final class CheckInViewController: NSViewController {
         resizePanel(for: child)
     }
 
-    private func resizePanel(for child: NSView) {
+    private func resizePanel(for child: NSView, animate: Bool = true) {
         child.layoutSubtreeIfNeeded()
-        let totalH = min(44 + 1 + child.fittingSize.height, 700)
+        let maxH = maxPanelHeight()
+        let totalH = min(44 + 1 + child.fittingSize.height, maxH)
         guard let p = panel else { return }
         let r = p.frame
-        p.setFrame(NSRect(x: r.origin.x, y: r.origin.y, width: 420, height: max(totalH, 200)),
-                   display: true, animate: true)
+        let newH = max(totalH, 200)
+        // Keep top edge fixed by adjusting origin.y
+        let newY = r.origin.y + r.height - newH
+        p.setFrame(NSRect(x: r.origin.x, y: newY, width: 420, height: newH),
+                   display: true, animate: animate)
+    }
+
+    private func maxPanelHeight() -> CGFloat {
+        guard let screen = panel?.screen ?? NSScreen.main else { return 700 }
+        return screen.visibleFrame.height - 40
     }
 
     // MARK: - Actions
@@ -231,6 +277,11 @@ final class CheckInViewController: NSViewController {
 
     func chatStateChanged(messages: [ChatMessage], streamingText: String) {
         chatViewRef?.update(messages: messages, streamingText: streamingText)
+    }
+
+    func resizePanelToFitChat() {
+        guard let child = currentChild else { return }
+        resizePanel(for: child, animate: false)
     }
 }
 
@@ -478,8 +529,7 @@ private final class AppKitChatView: NSView, NSTextFieldDelegate {
     private var displayedCount = 0
     private var streamingLabel: NSTextField?
     private var streamingRow: NSView?
-
-    override var intrinsicContentSize: NSSize { NSSize(width: 420, height: 350) }
+    private var scrollHeightConstraint: NSLayoutConstraint!
 
     init(onSend: @escaping (String) -> Void, onDone: @escaping () -> Void) {
         self.onSend = onSend
@@ -536,10 +586,15 @@ private final class AppKitChatView: NSView, NSTextFieldDelegate {
 
         [scrollView, sep1, inputRow, sep2, doneBtn].forEach { addSubview($0) }
 
+        // Use a height constraint on the scroll view that tracks content
+        scrollHeightConstraint = scrollView.heightAnchor.constraint(equalToConstant: 60)
+        scrollHeightConstraint.priority = .defaultHigh
+
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollHeightConstraint,
             docView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
             sep1.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
             sep1.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -555,6 +610,22 @@ private final class AppKitChatView: NSView, NSTextFieldDelegate {
             doneBtn.centerXAnchor.constraint(equalTo: centerXAnchor),
             doneBtn.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
         ])
+    }
+
+    func updateScrollHeight() {
+        guard let docView = scrollView.documentView else { return }
+        docView.layoutSubtreeIfNeeded()
+        let contentH = docView.fittingSize.height
+        // Calculate max scroll height based on screen
+        let maxScrollH: CGFloat
+        if let screen = window?.screen ?? NSScreen.main {
+            // Total panel chrome: header(44) + sep(1) + input(34+8+8) + sep + done(10+20+10) = ~135
+            maxScrollH = screen.visibleFrame.height - 40 - 135
+        } else {
+            maxScrollH = 500
+        }
+        scrollHeightConstraint.constant = min(max(contentH, 60), maxScrollH)
+        invalidateIntrinsicContentSize()
     }
 
     @objc private func sendMessage() {
@@ -591,7 +662,7 @@ private final class AppKitChatView: NSView, NSTextFieldDelegate {
             streamingLabel = lbl
         }
 
-        scrollToBottom()
+        resizePanelForChat()
     }
 
     private func addBubble(_ msg: ChatMessage) {
@@ -639,11 +710,10 @@ private final class AppKitChatView: NSView, NSTextFieldDelegate {
         return (row, label)
     }
 
-    private func scrollToBottom() {
-        guard let doc = scrollView.documentView else { return }
-        let bottom = NSPoint(x: 0, y: max(0, doc.frame.height - scrollView.contentView.bounds.height))
-        scrollView.contentView.scroll(to: bottom)
-        scrollView.reflectScrolledClipView(scrollView.contentView)
+    private func resizePanelForChat() {
+        updateScrollHeight()
+        guard let vc = window?.contentViewController as? CheckInViewController else { return }
+        vc.resizePanelToFitChat()
     }
 }
 
