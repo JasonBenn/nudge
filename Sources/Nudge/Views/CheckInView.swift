@@ -128,6 +128,22 @@ struct CheckInView: View {
                 .foregroundColor(.primary)
                 .disabled(customInput.trimmingCharacters(in: .whitespaces).isEmpty)
             }
+
+            Divider()
+                .padding(.vertical, 4)
+
+            Button(action: {
+                completeWithTabAction(.closeAll)
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "xmark.circle")
+                        .imageScale(.small)
+                    Text("Just close everything")
+                        .font(.system(size: 13))
+                }
+                .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .topLeading)
