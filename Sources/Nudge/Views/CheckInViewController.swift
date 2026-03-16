@@ -279,10 +279,11 @@ final class CheckInViewController: NSViewController {
             let summary = await self.coordinator.summarizeAndComplete()
             switch phase {
             case .trigger:
-                if !summary.isEmpty { self.triggerResponse = summary }
+                // Use summary for Q2 generation but keep triggerResponse as user's original text
+                let triggerSummary = summary.isEmpty ? self.triggerResponse : summary
                 self.isLoadingQ2 = true
                 self.transition(to: .q2)
-                let revised = await self.coordinator.generateRevisedQ2(triggerSummary: self.triggerResponse)
+                let revised = await self.coordinator.generateRevisedQ2(triggerSummary: triggerSummary)
                 self.isLoadingQ2 = false
                 if let revised {
                     self.revisedReplacementOptions = revised
@@ -292,7 +293,7 @@ final class CheckInViewController: NSViewController {
                 self.coordinator.chatMessages = []
                 self.coordinator.streamingText = ""
             case .replacement:
-                if !summary.isEmpty { self.replacementResponse = summary }
+                // Don't overwrite user's replacement choice with AI summary
                 self.transition(to: .q3)
             }
         }

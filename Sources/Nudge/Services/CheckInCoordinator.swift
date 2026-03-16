@@ -213,7 +213,7 @@ final class CheckInCoordinator {
             return try await claude.summarizeConversation(messages: claudeMessages)
         } catch {
             print("[Nudge] Summarization error: \(error)")
-            return chatMessages.last?.content ?? ""
+            return chatMessages.last(where: { $0.role == .user })?.content ?? ""
         }
     }
 
