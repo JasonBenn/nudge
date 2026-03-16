@@ -354,6 +354,22 @@ final class CheckInCoordinator {
                 print("[Nudge] AppleScript error closing tabs: \(closeError)")
             }
         }
+
+        // Close all incognito windows (can't read their URLs, assume distracting)
+        let incognitoScript = """
+        tell application "Google Chrome"
+            repeat with w in (reverse of (every window whose mode is "incognito"))
+                close w
+            end repeat
+        end tell
+        """
+        if let incognitoAppleScript = NSAppleScript(source: incognitoScript) {
+            var incognitoError: NSDictionary?
+            incognitoAppleScript.executeAndReturnError(&incognitoError)
+            if let incognitoError {
+                print("[Nudge] AppleScript error closing incognito: \(incognitoError)")
+            }
+        }
     }
 
     // MARK: - Animation
