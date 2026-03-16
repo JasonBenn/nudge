@@ -25,6 +25,9 @@ final class CheckInViewController: NSViewController {
     private weak var chatViewRef: AppKitChatView?
     private weak var q2ViewRef: Q2View?
     private weak var backButton: NSButton?
+    private var timerLabel: NSTextField!
+    private var elapsedTimer: Timer?
+    private var startTime: Date?
 
     init(data: CheckInData, coordinator: CheckInCoordinator,
          onComplete: @escaping (String, String, TabAction) -> Void,
@@ -76,12 +79,30 @@ final class CheckInViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         panel = view.window as? FloatingPanel
+        startTime = Date()
+        elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, let start = self.startTime else { return }
+            let elapsed = Int(Date().timeIntervalSince(start))
+            let mins = elapsed / 60
+            let secs = elapsed % 60
+            self.timerLabel.stringValue = String(format: "%d:%02d", mins, secs)
+        }
         transition(to: .q1)
+    }
+
+    deinit {
+        elapsedTimer?.invalidate()
     }
 
     private func makeHeader() -> NSView {
         let header = NSView()
         header.translatesAutoresizingMaskIntoConstraints = false
+
+        let timer = NSTextField(labelWithString: "0:00")
+        timer.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        timer.textColor = .tertiaryLabelColor
+        timer.translatesAutoresizingMaskIntoConstraints = false
+        self.timerLabel = timer
 
         let backBtn = NSButton()
         backBtn.bezelStyle = .inline
@@ -108,11 +129,14 @@ final class CheckInViewController: NSViewController {
         closeBtn.action = #selector(closePanel)
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
 
+        header.addSubview(timer)
         header.addSubview(backBtn)
         header.addSubview(label)
         header.addSubview(closeBtn)
         NSLayoutConstraint.activate([
-            backBtn.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),
+            timer.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 12),
+            timer.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            backBtn.leadingAnchor.constraint(equalTo: timer.trailingAnchor, constant: 4),
             backBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             backBtn.widthAnchor.constraint(equalToConstant: 20),
             backBtn.heightAnchor.constraint(equalToConstant: 20),
@@ -164,7 +188,8 @@ final class CheckInViewController: NSViewController {
                     self?.coordinator.updateEvent(triggerSelection: opt)
                     self?.transition(to: .q2)
                 },
-                onCustomSubmit: { [weak self] text in self?.submitCustomTrigger(text) }
+                onCustomSubmit: { [weak self] text in self?.submitCustomTrigger(text) },
+                onCloseAll: { [weak self] in self?.completeWithTabAction(.closeAll) }
             )
         case .q2:
             let v = Q2View(
@@ -353,10 +378,12 @@ private final class Q1View: NSView {
     private let onCustomSubmit: (String) -> Void
     private var textInput: GrowingTextInput!
     private var goTarget: ActionTarget!
+    private var closeAllTarget: ActionTarget?
 
     init(nudge: String, options: [String],
          onSelect: @escaping (String) -> Void,
-         onCustomSubmit: @escaping (String) -> Void) {
+         onCustomSubmit: @escaping (String) -> Void,
+         onCloseAll: @escaping () -> Void) {
         self.onCustomSubmit = onCustomSubmit
         super.init(frame: .zero)
 
@@ -366,6 +393,7 @@ private final class Q1View: NSView {
             secondaryLabel("What pulled you away?"),
             optionButtons(options, onSelect: onSelect),
             customRow(placeholder: "I'm avoiding feeling..."),
+            closeAllRow(onCloseAll: onCloseAll),
         ]
         for v in views {
             stack.addArrangedSubview(v)
@@ -396,6 +424,30 @@ private final class Q1View: NSView {
         row.addArrangedSubview(goBtn)
         textInput.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return row
+    }
+
+    private func closeAllRow(onCloseAll: @escaping () -> Void) -> NSView {
+        closeAllTarget = ActionTarget(action: onCloseAll)
+
+        let btn = NSButton(frame: .zero)
+        btn.isBordered = false
+        btn.title = "Just close everything"
+        btn.font = .systemFont(ofSize: 13)
+        btn.contentTintColor = .secondaryLabelColor
+        if let img = NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: nil) {
+            btn.image = img
+            btn.imagePosition = .imageLeading
+        }
+        btn.target = closeAllTarget
+        btn.action = #selector(ActionTarget.fire)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+
+        let sep = makeSep()
+        let wrapper = vstack(spacing: 8)
+        wrapper.addArrangedSubview(sep)
+        wrapper.addArrangedSubview(btn)
+        fillWidth(sep, in: wrapper)
+        return wrapper
     }
 }
 
