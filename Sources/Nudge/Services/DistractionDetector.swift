@@ -71,11 +71,11 @@ final class DistractionDetector {
         guard currentlyDistracting else { return }
 
         let isFresh = !wasPreviouslyDistracting
+        guard isFresh else { return }
 
         let elapsed = Date().timeIntervalSince(lastTriggerTime)
         let sameURL = url == lastTriggeredURL
         let cooldownSeconds: TimeInterval = sameURL ? 600 : 60
-        guard isFresh || (!sameURL && elapsed >= cooldownSeconds) else { return }
         guard elapsed >= cooldownSeconds else {
             let remaining = Int(cooldownSeconds - elapsed)
             print("[Nudge] Rate limited — \(remaining)s until next trigger. Site: \(url)")
