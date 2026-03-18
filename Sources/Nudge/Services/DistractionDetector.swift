@@ -20,7 +20,11 @@ final class DistractionDetector {
     private var lastEventTimestamp: String?
     private var lastTriggerTime: Date = .distantPast
     private var lastTriggeredURL: String = ""
-    private var lastURLWasDistracting = false
+    /// Tracks when we last saw a distracting AW event — used to require a sustained
+    /// productive period before re-triggering (prevents false transitions from AW
+    /// interleaving events across multiple Chrome windows).
+    private var lastDistractingEventTime: Date = .distantPast
+    private var hasProcessedFirstEvent = false
     private var pollingTask: Task<Void, Never>?
 
     init() {}
@@ -62,16 +66,26 @@ final class DistractionDetector {
         lastEventTimestamp = ts
 
         // Classify using AW categories — first match wins.
-        // Only trigger if the first matching category is "Distraction".
         let matchText = "\(url) \(title)"
         let currentlyDistracting = classify(matchText) == "Distraction"
-        let wasPreviouslyDistracting = lastURLWasDistracting
-        lastURLWasDistracting = currentlyDistracting
+
+        // On first event after launch, seed the state but never trigger —
+        // we don't know what the user was doing before launch.
+        if !hasProcessedFirstEvent {
+            hasProcessedFirstEvent = true
+            if currentlyDistracting { lastDistractingEventTime = Date() }
+            return
+        }
+
+        // Require a sustained productive period (5 min) before triggering again.
+        // AW interleaves events from multiple Chrome windows, so we can't rely on
+        // single-event transitions — e.g. x.com and localhost:3300 alternate rapidly
+        // even when the user is just browsing Twitter.
+        let wasRecentlyDistracting = Date().timeIntervalSince(lastDistractingEventTime) < 300
+        if currentlyDistracting { lastDistractingEventTime = Date() }
 
         guard currentlyDistracting else { return }
-
-        let isFresh = !wasPreviouslyDistracting
-        guard isFresh else { return }
+        guard !wasRecentlyDistracting else { return }
 
         let elapsed = Date().timeIntervalSince(lastTriggerTime)
         let sameURL = url == lastTriggeredURL
