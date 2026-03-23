@@ -188,8 +188,12 @@ final class CheckInViewController: NSViewController {
                     self?.coordinator.updateEvent(triggerSelection: opt)
                     self?.transition(to: .q2)
                 },
-                onCustomSubmit: { [weak self] text in self?.submitCustomTrigger(text) },
-                onCloseAll: { [weak self] in self?.completeWithTabAction(.closeAll) }
+                onDiscuss: { [weak self] text in self?.submitCustomTrigger(text) },
+                onShortCircuit: { [weak self] reason in
+                    self?.triggerResponse = reason
+                    self?.coordinator.updateEvent(triggerSelection: reason)
+                    self?.completeWithTabAction(.closeAll)
+                }
             )
         case .q2:
             let v = Q2View(
@@ -376,16 +380,21 @@ private final class OptionNSButton: NSView {
 // MARK: - Q1View
 
 private final class Q1View: NSView {
-    private let onCustomSubmit: (String) -> Void
+    private let onSelect: (String) -> Void
+    private let onDiscuss: (String) -> Void
+    private let onShortCircuit: (String) -> Void
     private var textInput: GrowingTextInput!
-    private var goTarget: ActionTarget!
-    private var closeAllTarget: ActionTarget?
+    private var submitTarget: ActionTarget!
+    private var discussTarget: ActionTarget!
+    private var shortCircuitTarget: ActionTarget!
 
     init(nudge: String, options: [String],
          onSelect: @escaping (String) -> Void,
-         onCustomSubmit: @escaping (String) -> Void,
-         onCloseAll: @escaping () -> Void) {
-        self.onCustomSubmit = onCustomSubmit
+         onDiscuss: @escaping (String) -> Void,
+         onShortCircuit: @escaping (String) -> Void) {
+        self.onSelect = onSelect
+        self.onDiscuss = onDiscuss
+        self.onShortCircuit = onShortCircuit
         super.init(frame: .zero)
 
         let stack = vstack(spacing: 16)
@@ -393,8 +402,7 @@ private final class Q1View: NSView {
             bodyLabel(nudge),
             secondaryLabel("What pulled you away?"),
             optionButtons(options, onSelect: onSelect),
-            customRow(placeholder: "I'm avoiding feeling..."),
-            closeAllRow(onCloseAll: onCloseAll),
+            customInputSection(placeholder: "Something else..."),
         ]
         for v in views {
             stack.addArrangedSubview(v)
@@ -407,47 +415,54 @@ private final class Q1View: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private func customRow(placeholder: String) -> NSView {
-        textInput = GrowingTextInput(placeholder: placeholder, onSubmit: { [weak self] text in
-            self?.onCustomSubmit(text)
-        })
-
-        goTarget = ActionTarget { [weak self] in
-            guard let self, !self.textInput.text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-            self.onCustomSubmit(self.textInput.text.trimmingCharacters(in: .whitespaces))
-        }
-        let goBtn = NSButton(title: "Go", target: goTarget, action: #selector(ActionTarget.fire))
-        goBtn.bezelStyle = .rounded
-        goBtn.translatesAutoresizingMaskIntoConstraints = false
-
-        let row = hstack(spacing: 8)
-        row.addArrangedSubview(textInput)
-        row.addArrangedSubview(goBtn)
-        textInput.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return row
+    private func trimmedText() -> String {
+        textInput.text.trimmingCharacters(in: .whitespaces)
     }
 
-    private func closeAllRow(onCloseAll: @escaping () -> Void) -> NSView {
-        closeAllTarget = ActionTarget(action: onCloseAll)
+    private func customInputSection(placeholder: String) -> NSView {
+        textInput = GrowingTextInput(placeholder: placeholder, onSubmit: { [weak self] text in
+            self?.onSelect(text)
+        })
 
-        let btn = NSButton(frame: .zero)
-        btn.isBordered = false
-        btn.title = "Just close everything"
-        btn.font = .systemFont(ofSize: 13)
-        btn.contentTintColor = .secondaryLabelColor
-        if let img = NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: nil) {
-            btn.image = img
-            btn.imagePosition = .imageLeading
+        submitTarget = ActionTarget { [weak self] in
+            guard let self else { return }
+            let text = self.trimmedText()
+            guard !text.isEmpty else { return }
+            self.onSelect(text)
         }
-        btn.target = closeAllTarget
-        btn.action = #selector(ActionTarget.fire)
-        btn.translatesAutoresizingMaskIntoConstraints = false
+        discussTarget = ActionTarget { [weak self] in
+            guard let self else { return }
+            let text = self.trimmedText()
+            guard !text.isEmpty else { return }
+            self.onDiscuss(text)
+        }
+        shortCircuitTarget = ActionTarget { [weak self] in
+            guard let self else { return }
+            let text = self.trimmedText()
+            self.onShortCircuit(text.isEmpty ? "(closed without reason)" : text)
+        }
 
-        let sep = makeSep()
+        let submitBtn = NSButton(title: "Submit", target: submitTarget, action: #selector(ActionTarget.fire))
+        submitBtn.bezelStyle = .rounded
+        submitBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        let discussBtn = NSButton(title: "Discuss", target: discussTarget, action: #selector(ActionTarget.fire))
+        discussBtn.bezelStyle = .rounded
+        discussBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        let shortCircuitBtn = NSButton(title: "Close all", target: shortCircuitTarget, action: #selector(ActionTarget.fire))
+        shortCircuitBtn.bezelStyle = .rounded
+        shortCircuitBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        let btnRow = hstack(spacing: 8)
+        btnRow.addArrangedSubview(submitBtn)
+        btnRow.addArrangedSubview(discussBtn)
+        btnRow.addArrangedSubview(shortCircuitBtn)
+
         let wrapper = vstack(spacing: 8)
-        wrapper.addArrangedSubview(sep)
-        wrapper.addArrangedSubview(btn)
-        fillWidth(sep, in: wrapper)
+        wrapper.addArrangedSubview(textInput)
+        wrapper.addArrangedSubview(btnRow)
+        fillWidth(textInput, in: wrapper)
         return wrapper
     }
 }
