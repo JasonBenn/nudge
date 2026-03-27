@@ -275,12 +275,22 @@ final class CheckInCoordinator {
     }
 
     private func closeDistractingTabs(keepCurrent: Bool) {
+        // Bail out if Chrome isn't running — don't launch it just to close tabs
+        let chromeRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.google.Chrome" }
+        guard chromeRunning else {
+            print("[Nudge] Chrome not running, nothing to close")
+            return
+        }
+
         // Step 1: Get tab info from all windows (URL + title for regex matching)
+        // Uses "every window" which includes all Chrome profiles
         let getTabsScript = """
         set output to ""
         tell application "Google Chrome"
+            set windowList to every window
+            if (count of windowList) = 0 then return output
             set frontIndex to index of front window
-            repeat with w from 1 to (count of windows)
+            repeat with w from 1 to (count of windowList)
                 set theWindow to window w
                 set wIndex to index of theWindow
                 set activeIndex to active tab index of theWindow
@@ -356,6 +366,10 @@ final class CheckInCoordinator {
         }
 
         // Close all incognito windows (can't read their URLs, assume distracting)
+        // Re-check Chrome is still running — closing tabs above may have quit it
+        let stillRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.google.Chrome" }
+        guard stillRunning else { return }
+
         let incognitoScript = """
         tell application "Google Chrome"
             repeat with w in (reverse of (every window whose mode is "incognito"))
