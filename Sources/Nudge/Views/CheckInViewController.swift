@@ -25,6 +25,7 @@ final class CheckInViewController: NSViewController {
     private weak var chatViewRef: AppKitChatView?
     private weak var q2ViewRef: Q2View?
     private weak var backButton: NSButton?
+    private weak var closeButton: NSButton?
     private var timerLabel: NSTextField!
     private var elapsedTimer: Timer?
     private var startTime: Date?
@@ -128,6 +129,7 @@ final class CheckInViewController: NSViewController {
         closeBtn.target = self
         closeBtn.action = #selector(closePanel)
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
+        self.closeButton = closeBtn
 
         header.addSubview(timer)
         header.addSubview(backBtn)
@@ -176,6 +178,7 @@ final class CheckInViewController: NSViewController {
         currentState = state
         currentChild?.removeFromSuperview()
         backButton?.isHidden = (state == .q1 || state == .done)
+        closeButton?.isHidden = (state == .q1)
 
         let child: NSView
         switch state {
