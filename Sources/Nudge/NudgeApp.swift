@@ -52,10 +52,7 @@ struct NudgeApp: App {
                 onQuit: { NSApplication.shared.terminate(nil) }
             )
         } label: {
-            let icon = coordinator.isLoading
-                ? coordinator.animationIcon
-                : "eye"
-            Image(systemName: icon)
+            Image(systemName: "eye")
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(coordinator.isLoading ? Color.purple : Color.primary)
         }

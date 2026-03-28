@@ -16,7 +16,7 @@ final class DistractionDetector {
         categories.filter { $0.group == "Distraction" }.map(\.regex)
     }
 
-    private var bucketId: String?
+    private(set) var bucketId: String?
     private var lastEventTimestamp: String?
     private var lastTriggerTime: Date = .distantPast
     private var lastTriggeredURL: String = ""

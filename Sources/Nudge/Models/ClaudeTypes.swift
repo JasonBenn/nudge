@@ -38,11 +38,3 @@ struct StreamDelta: Decodable {
     let type: String?
     let text: String?
 }
-
-// MARK: - Check-in output
-
-struct CheckInData: Decodable {
-    let nudge: String
-    let trigger_options: [String]
-    let replacement_options: [String]
-}

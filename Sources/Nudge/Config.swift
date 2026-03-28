@@ -4,9 +4,19 @@ enum Config {
     static let awBase = "http://localhost:5600/api"
     static let pollIntervalSeconds: TimeInterval = 20
     static let rateLimitSeconds: TimeInterval = 0
-    static let workStartHour = 8
-    static let workEndHour = 17
     static let claudeModel = "claude-opus-4-6"
+
+    // Tiered auto-close: countdown seconds based on daily distraction time
+    static let tier1MaxMinutes = 15.0    // below this: 5min countdown
+    static let tier2MaxMinutes = 30.0    // below this: 2min countdown
+    static let tier1Countdown: TimeInterval = 300  // 5 min
+    static let tier2Countdown: TimeInterval = 120  // 2 min
+
+    static func countdownFor(dailyMinutes: Double) -> TimeInterval {
+        if dailyMinutes <= tier1MaxMinutes { return tier1Countdown }
+        if dailyMinutes <= tier2MaxMinutes { return tier2Countdown }
+        return 0
+    }
 
     static let dbPath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path

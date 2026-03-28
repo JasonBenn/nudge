@@ -110,6 +110,54 @@ enum ActivityWatchService {
         }
     }
 
+    /// Fetch events in a time range from a bucket.
+    static func getEventsInRange(bucketId: String, start: Date, end: Date) async -> [AWEvent] {
+        guard var components = URLComponents(string: "\(Config.awBase)/0/buckets/\(bucketId)/events") else { return [] }
+        let fmt = ISO8601DateFormatter()
+        components.queryItems = [
+            URLQueryItem(name: "start", value: fmt.string(from: start)),
+            URLQueryItem(name: "end", value: fmt.string(from: end)),
+            URLQueryItem(name: "limit", value: "-1"),
+        ]
+        guard let url = components.url else { return [] }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            return try JSONDecoder().decode([AWEvent].self, from: data)
+        } catch {
+            print("[AW] Failed to get events in range for \(bucketId): \(error)")
+            return []
+        }
+    }
+
+    /// Sum distraction seconds for today using AW events + category classification.
+    static func dailyDistractionSeconds(bucketId: String, categories: [CompiledCategory]) async -> TimeInterval {
+        let cal = Calendar.current
+        let startOfDay = cal.startOfDay(for: Date())
+        let events = await getEventsInRange(bucketId: bucketId, start: startOfDay, end: Date())
+
+        var total: TimeInterval = 0
+        for event in events {
+            let matchText = "\(event.data.url) \(event.data.title)"
+            if classifyText(matchText, categories: categories) == "Distraction" {
+                total += event.duration
+            }
+        }
+        print("[AW] Daily distraction time: \(String(format: "%.0f", total))s (\(String(format: "%.1f", total / 60))min)")
+        return total
+    }
+
+    /// Classify text against categories (same logic as DistractionDetector.classify).
+    private static func classifyText(_ text: String, categories: [CompiledCategory]) -> String? {
+        let range = NSRange(text.startIndex..., in: text)
+        for cat in categories where cat.group != "Distraction" {
+            if cat.regex.firstMatch(in: text, range: range) != nil { return cat.group }
+        }
+        for cat in categories where cat.group == "Distraction" {
+            if cat.regex.firstMatch(in: text, range: range) != nil { return "Distraction" }
+        }
+        return nil
+    }
+
     /// Fetch recent events from a bucket.
     static func getLatestEvents(bucketId: String, limit: Int = 5) async -> [AWEvent] {
         guard var components = URLComponents(string: "\(Config.awBase)/0/buckets/\(bucketId)/events") else { return [] }

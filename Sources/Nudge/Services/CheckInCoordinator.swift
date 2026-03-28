@@ -2,34 +2,19 @@ import Foundation
 import SwiftData
 import SwiftUI
 
-enum TabAction: String {
-    case closeAll = "close_all"
-    case closeAllButCurrent = "close_all_but_current"
-    case closeInFiveMinutes = "close_in_5m"
-    case leaveOpen = "leave_open"
-}
-
 @Observable
 @MainActor
 final class CheckInCoordinator {
     var chatMessages: [ChatMessage] = []
     var streamingText = ""
-    var checkInData: CheckInData?
-    var onChatStateChanged: (([ChatMessage], String) -> Void)?
     var isLoading = false
-    var animationIcon = "eye"
     var hasActiveCheckIn: Bool { panel.isVisible }
-
-    private static let eyeFrames = ["eye", "eye.fill", "eye.circle", "eye.circle.fill", "eye.fill", "eye"]
-    private var animationTimer: Timer?
-    private var animationFrame = 0
+    var onChatStateChanged: (([ChatMessage], String) -> Void)?
 
     private let claude = ClaudeService()
-    private let contextGatherer = ContextGatherer()
     private let panel = FloatingPanel()
     private var currentSiteURL = ""
     private var currentSiteTitle = ""
-    private var currentNudge = ""
     private var modelContext: ModelContext?
     private weak var detector: DistractionDetector?
     private var currentEvent: NudgeEvent?
@@ -48,50 +33,58 @@ final class CheckInCoordinator {
         }
         currentSiteURL = url
         currentSiteTitle = title
-        startAnimation()
         isLoading = true
-        chatMessages = []
-        streamingText = ""
-        checkInData = nil
 
         Task {
-            do {
-                let context = buildContext(url: url, title: title)
-                let data = try await claude.generateCheckIn(context: context)
-                self.checkInData = data
-                self.currentNudge = data.nudge
-                self.isLoading = false
-                self.stopAnimation()
-                self.saveInitialEvent(data: data)
-                showPanel()
-            } catch {
-                print("[Nudge] Failed to generate check-in: \(error)")
-                // Fallback
-                let fallback = CheckInData(
-                    nudge: "Noticed you switched to a distracting site. What's going on?",
-                    trigger_options: ["Bored", "Anxious", "Tired", "Avoiding something", "Just a habit"],
-                    replacement_options: ["Get back to deep work", "Take a walk", "Read something", "Quick stretch", "Journal for 5 min"]
-                )
-                self.checkInData = fallback
-                self.currentNudge = fallback.nudge
-                self.isLoading = false
-                self.stopAnimation()
-                self.saveInitialEvent(data: fallback)
-                showPanel()
+            defer { self.isLoading = false }
+            // Query daily distraction time to determine tier
+            let dailySeconds: TimeInterval
+            if let bucketId = detector?.bucketId, let categories = detector?.categories {
+                dailySeconds = await ActivityWatchService.dailyDistractionSeconds(bucketId: bucketId, categories: categories)
+            } else {
+                dailySeconds = 0
             }
+            let dailyMinutes = dailySeconds / 60
+            let countdown = Config.countdownFor(dailyMinutes: dailyMinutes)
+
+            // Save initial event
+            saveInitialEvent()
+
+            if countdown == 0 {
+                // Tier 3: immediate close, no panel
+                print("[Nudge] Daily distraction: \(String(format: "%.0f", dailyMinutes))min — auto-closing immediately")
+                updateEvent(tabAction: "auto_closed")
+                closeDistractingTabs(keepCurrent: false)
+                return
+            }
+
+            // Show panel with countdown + scoreboard
+            let scoreboard = fetchScoreboard()
+            print("[Nudge] Daily distraction: \(String(format: "%.0f", dailyMinutes))min — \(Int(countdown))s countdown, \(scoreboard.count) scoreboard entries")
+            showPanel(countdownSeconds: countdown, scoreboard: scoreboard)
         }
     }
 
     // MARK: - Panel
 
-    private func showPanel() {
-        guard let data = checkInData else { return }
+    private func showPanel(countdownSeconds: TimeInterval, scoreboard: [(String, Int)]) {
         let vc = CheckInViewController(
-            data: data,
+            countdownSeconds: countdownSeconds,
+            scoreboard: scoreboard,
             coordinator: self,
-            onComplete: { [weak self] trigger, replacement, tabAction in
-                self?.updateEvent(triggerSelection: trigger, replacementSelection: replacement, tabAction: tabAction.rawValue)
-                self?.handleTabAction(tabAction)
+            onComplete: { [weak self] replacement in
+                self?.updateEvent(replacementSelection: replacement, tabAction: "close_all")
+                self?.closeDistractingTabs(keepCurrent: false)
+                self?.dismissPanel()
+            },
+            onCloseAll: { [weak self] in
+                self?.updateEvent(tabAction: "close_all")
+                self?.closeDistractingTabs(keepCurrent: false)
+                self?.dismissPanel()
+            },
+            onAutoClose: { [weak self] in
+                self?.updateEvent(tabAction: "auto_closed")
+                self?.closeDistractingTabs(keepCurrent: false)
                 self?.dismissPanel()
             },
             onDismiss: { [weak self] in
@@ -111,14 +104,10 @@ final class CheckInCoordinator {
 
     func runLatencyTest() {
         dismissPanel()
-        checkInData = CheckInData(
-            nudge: "Latency test — measuring input lag",
-            trigger_options: ["Option A", "Option B", "Option C", "Option D", "Option E"],
-            replacement_options: ["Option A", "Option B", "Option C", "Option D", "Option E"]
-        )
         currentSiteURL = "https://x.com"
         currentSiteTitle = "Latency Test"
-        showPanel()
+        saveInitialEvent()
+        showPanel(countdownSeconds: 300, scoreboard: fetchScoreboard())
         InputLatencyMonitor.shared.runTest(panel: panel)
     }
 
@@ -126,7 +115,6 @@ final class CheckInCoordinator {
         panel.dismiss()
         chatMessages = []
         streamingText = ""
-        checkInData = nil
         currentEvent = nil
         onChatStateChanged = nil
     }
@@ -150,7 +138,6 @@ final class CheckInCoordinator {
                     self.streamingText = accumulated
                     self.onChatStateChanged?(self.chatMessages, accumulated)
                 }
-                // Finalize: move streaming text to a proper message
                 self.chatMessages.append(ChatMessage(role: .assistant, content: accumulated))
                 self.streamingText = ""
                 self.onChatStateChanged?(self.chatMessages, "")
@@ -166,70 +153,39 @@ final class CheckInCoordinator {
         }
     }
 
-    func generateRevisedQ2(triggerSummary: String) async -> [String]? {
-        let prompt = """
-        The user just had a conversation about why they got distracted. Here's what they said:
 
-        Trigger: \(triggerSummary)
+    // MARK: - Scoreboard
 
-        Conversation:
-        \(chatMessages.map { "\($0.role == .user ? "User" : "Coach"): \($0.content)" }.joined(separator: "\n"))
+    private func fetchScoreboard() -> [(String, Int)] {
+        guard let ctx = modelContext else { return [] }
+        let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+        let descriptor = FetchDescriptor<NudgeEvent>(
+            predicate: #Predicate { $0.timestamp >= thirtyDaysAgo },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        guard let events = try? ctx.fetch(descriptor) else { return [] }
 
-        Based on this conversation, generate exactly 5 personalized suggestions for what they could do instead right now. Make them specific to what they shared — not generic. Return JSON only:
-        {"replacement_options": ["...", "...", "...", "...", "..."]}
-        """
-        do {
-            let body = ClaudeRequest(
-                model: Config.claudeModel,
-                max_tokens: 512,
-                system: nil,
-                messages: [ClaudeMessage(role: "user", content: prompt)],
-                stream: nil
-            )
-            // Use claude service directly
-            let data = try await claude.generateRawResponse(body: body)
-            var cleaned = data.trimmingCharacters(in: .whitespacesAndNewlines)
-            if cleaned.hasPrefix("```") {
-                cleaned = cleaned.split(separator: "\n", maxSplits: 1).dropFirst().joined(separator: "\n")
-                if let fence = cleaned.range(of: "```") {
-                    cleaned = String(cleaned[cleaned.startIndex..<fence.lowerBound])
-                }
-            }
-            struct Q2Response: Decodable { let replacement_options: [String] }
-            let parsed = try JSONDecoder().decode(Q2Response.self, from: Data(cleaned.utf8))
-            return parsed.replacement_options
-        } catch {
-            print("[Nudge] Failed to generate revised Q2: \(error)")
-            return nil
+        var counts: [String: Int] = [:]
+        for event in events {
+            guard let interaction = event.interaction else { continue }
+            let choice = interaction.replacementSelection.trimmingCharacters(in: .whitespaces)
+            guard !choice.isEmpty else { continue }
+            counts[choice, default: 0] += 1
         }
-    }
-
-    func summarizeAndComplete() async -> String {
-        guard !chatMessages.isEmpty else { return "" }
-        let claudeMessages = chatMessages.map {
-            ClaudeMessage(role: $0.role == .user ? "user" : "assistant", content: $0.content)
-        }
-        do {
-            return try await claude.summarizeConversation(messages: claudeMessages)
-        } catch {
-            print("[Nudge] Summarization error: \(error)")
-            return chatMessages.last(where: { $0.role == .user })?.content ?? ""
-        }
+        return counts.sorted { $0.value > $1.value }
     }
 
     // MARK: - Persistence
 
-    private func saveInitialEvent(data: CheckInData) {
+    private func saveInitialEvent() {
         guard let ctx = modelContext else { return }
-
         let interaction = Interaction(
-            nudge: data.nudge,
+            nudge: "",
             triggerSelection: "",
             replacementSelection: "",
             tabAction: "",
             conversation: []
         )
-
         let event = NudgeEvent(siteURL: currentSiteURL, siteTitle: currentSiteTitle, interaction: interaction)
         ctx.insert(event)
         try? ctx.save()
@@ -259,31 +215,18 @@ final class CheckInCoordinator {
 
     // MARK: - Tab Actions
 
-    private func handleTabAction(_ action: TabAction) {
-        switch action {
-        case .closeAll:
-            closeDistractingTabs(keepCurrent: false)
-        case .closeAllButCurrent:
-            closeDistractingTabs(keepCurrent: true)
-        case .closeInFiveMinutes:
-            DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
-                self?.closeDistractingTabs(keepCurrent: false)
-            }
-        case .leaveOpen:
-            break
-        }
+    func closeTabsOnly() {
+        updateEvent(tabAction: "close_all")
+        closeDistractingTabs(keepCurrent: false)
     }
 
     private func closeDistractingTabs(keepCurrent: Bool) {
-        // Bail out if Chrome isn't running — don't launch it just to close tabs
         let chromeRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.google.Chrome" }
         guard chromeRunning else {
             print("[Nudge] Chrome not running, nothing to close")
             return
         }
 
-        // Step 1: Get tab info from all windows (URL + title for regex matching)
-        // Uses "every window" which includes all Chrome profiles
         let getTabsScript = """
         set output to ""
         tell application "Google Chrome"
@@ -314,7 +257,6 @@ final class CheckInCoordinator {
         }
 
         let output = result.stringValue ?? ""
-        // Parse: each line is "windowIndex\ttabIndex\tactiveTabIndex\tisFrontWindow\turl\ttitle"
         struct TabInfo {
             let windowIndex: Int
             let tabIndex: Int
@@ -333,7 +275,6 @@ final class CheckInCoordinator {
             let url = parts[4]
             let title = parts[5]
             let isFrontActiveTab = isFrontWindow && tabIdx == activeIdx
-            // Match against "url title" like the distraction detector does
             let matchText = "\(url) \(title)"
             let isDistracting = detector?.isDistracting(matchText) ?? false
 
@@ -347,7 +288,6 @@ final class CheckInCoordinator {
             return
         }
 
-        // Step 2: Close tabs in reverse order (so indices stay valid)
         let sorted = tabsToClose.sorted { ($0.windowIndex, $0.tabIndex) > ($1.windowIndex, $1.tabIndex) }
         let closeCommands = sorted.map { "close tab \($0.tabIndex) of window \($0.windowIndex)" }
         let closeScript = """
@@ -365,8 +305,7 @@ final class CheckInCoordinator {
             }
         }
 
-        // Close all incognito windows (can't read their URLs, assume distracting)
-        // Re-check Chrome is still running — closing tabs above may have quit it
+        // Close incognito windows
         let stillRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.google.Chrome" }
         guard stillRunning else { return }
 
@@ -386,33 +325,4 @@ final class CheckInCoordinator {
         }
     }
 
-    // MARK: - Animation
-
-    private func startAnimation() {
-        animationFrame = 0
-        animationIcon = Self.eyeFrames[0]
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.animationFrame += 1
-                self.animationIcon = Self.eyeFrames[self.animationFrame % Self.eyeFrames.count]
-            }
-        }
-    }
-
-    private func stopAnimation() {
-        animationTimer?.invalidate()
-        animationTimer = nil
-        animationIcon = "eye"
-    }
-
-    // MARK: - Context
-
-    private func buildContext(url: String, title: String) -> String {
-        var context = "Just visited: \(url) (\(title))\n"
-        if let ctx = modelContext {
-            context += contextGatherer.gatherContext(modelContext: ctx)
-        }
-        return context
-    }
 }
