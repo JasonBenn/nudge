@@ -6,6 +6,10 @@ enum Config {
     static let rateLimitSeconds: TimeInterval = 0
     static let claudeModel = "claude-opus-4-6"
 
+    // Daily distraction budget
+    static let dailyBudgetMinutes = 30.0
+    static let dailyBudgetSeconds: TimeInterval = dailyBudgetMinutes * 60
+
     // Tiered auto-close: countdown seconds based on daily distraction time
     static let tier1MaxMinutes = 15.0    // below this: 5min countdown
     static let tier2MaxMinutes = 30.0    // below this: 2min countdown

@@ -11,6 +11,11 @@ final class CheckInCoordinator {
     var hasActiveCheckIn: Bool { panel.isVisible }
     var onChatStateChanged: (([ChatMessage], String) -> Void)?
 
+    // Countdown state (nil = no active countdown) — single source of truth for both menu bar and panel
+    var sessionRemaining: TimeInterval?
+    var dailyRemaining: TimeInterval?
+    var onCountdownTick: (() -> Void)?
+
     private let claude = ClaudeService()
     private let panel = FloatingPanel()
     private var currentSiteURL = ""
@@ -18,6 +23,7 @@ final class CheckInCoordinator {
     private var modelContext: ModelContext?
     private weak var detector: DistractionDetector?
     private var currentEvent: NudgeEvent?
+    private var menuBarTimer: Timer?
 
     func setup(modelContext ctx: ModelContext, detector: DistractionDetector) {
         self.modelContext = ctx
@@ -61,15 +67,15 @@ final class CheckInCoordinator {
             // Show panel with countdown + scoreboard
             let scoreboard = fetchScoreboard()
             print("[Nudge] Daily distraction: \(String(format: "%.0f", dailyMinutes))min — \(Int(countdown))s countdown, \(scoreboard.count) scoreboard entries")
-            showPanel(countdownSeconds: countdown, scoreboard: scoreboard)
+            startMenuBarCountdown(sessionSeconds: countdown, dailyUsedSeconds: dailySeconds)
+            showPanel(scoreboard: scoreboard)
         }
     }
 
     // MARK: - Panel
 
-    private func showPanel(countdownSeconds: TimeInterval, scoreboard: [(String, Int)]) {
+    private func showPanel(scoreboard: [(String, Int)]) {
         let vc = CheckInViewController(
-            countdownSeconds: countdownSeconds,
             scoreboard: scoreboard,
             coordinator: self,
             onComplete: { [weak self] replacement in
@@ -107,16 +113,41 @@ final class CheckInCoordinator {
         currentSiteURL = "https://x.com"
         currentSiteTitle = "Latency Test"
         saveInitialEvent()
-        showPanel(countdownSeconds: 300, scoreboard: fetchScoreboard())
+        startMenuBarCountdown(sessionSeconds: 300, dailyUsedSeconds: 0)
+        showPanel(scoreboard: fetchScoreboard())
         InputLatencyMonitor.shared.runTest(panel: panel)
     }
 
     func dismissPanel() {
+        stopMenuBarCountdown()
         panel.dismiss()
         chatMessages = []
         streamingText = ""
         currentEvent = nil
         onChatStateChanged = nil
+        onCountdownTick = nil
+    }
+
+    // MARK: - Menu Bar Countdown
+
+    private func startMenuBarCountdown(sessionSeconds: TimeInterval, dailyUsedSeconds: TimeInterval) {
+        sessionRemaining = sessionSeconds
+        dailyRemaining = max(0, Config.dailyBudgetSeconds - dailyUsedSeconds)
+        menuBarTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let s = self.sessionRemaining { self.sessionRemaining = max(0, s - 1) }
+                if let d = self.dailyRemaining { self.dailyRemaining = max(0, d - 1) }
+                self.onCountdownTick?()
+            }
+        }
+    }
+
+    func stopMenuBarCountdown() {
+        menuBarTimer?.invalidate()
+        menuBarTimer = nil
+        sessionRemaining = nil
+        dailyRemaining = nil
     }
 
     // MARK: - Chat

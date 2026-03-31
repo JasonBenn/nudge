@@ -3,7 +3,6 @@ import AppKit
 // MARK: - CheckInViewController
 
 final class CheckInViewController: NSViewController {
-    private let countdownSeconds: TimeInterval
     private let scoreboard: [(String, Int)]
     private unowned let coordinator: CheckInCoordinator
     private let onComplete: (String) -> Void
@@ -16,23 +15,19 @@ final class CheckInViewController: NSViewController {
     private var currentChild: NSView?
     private weak var chatViewRef: AppKitChatView?
     private var timerLabel: NSTextField!
-    private var countdownTimer: Timer?
-    private var remainingSeconds: TimeInterval
 
-    init(countdownSeconds: TimeInterval, scoreboard: [(String, Int)],
+    init(scoreboard: [(String, Int)],
          coordinator: CheckInCoordinator,
          onComplete: @escaping (String) -> Void,
          onCloseAll: @escaping () -> Void,
          onAutoClose: @escaping () -> Void,
          onDismiss: @escaping () -> Void) {
-        self.countdownSeconds = countdownSeconds
         self.scoreboard = scoreboard
         self.coordinator = coordinator
         self.onComplete = onComplete
         self.onCloseAll = onCloseAll
         self.onAutoClose = onAutoClose
         self.onDismiss = onDismiss
-        self.remainingSeconds = countdownSeconds
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -76,30 +71,24 @@ final class CheckInViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         panel = view.window as? FloatingPanel
-        remainingSeconds = countdownSeconds
         updateTimerDisplay()
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        coordinator.onCountdownTick = { [weak self] in
             guard let self else { return }
-            self.remainingSeconds -= 1
             self.updateTimerDisplay()
-            if self.remainingSeconds <= 0 {
-                self.countdownTimer?.invalidate()
+            if (self.coordinator.sessionRemaining ?? 0) <= 0 {
                 self.onAutoClose()
             }
         }
         showScoreboard()
     }
 
-    deinit {
-        countdownTimer?.invalidate()
-    }
-
     private func updateTimerDisplay() {
-        let secs = max(0, Int(remainingSeconds))
+        let remaining = coordinator.sessionRemaining ?? 0
+        let secs = max(0, Int(remaining))
         let mins = secs / 60
         let s = secs % 60
         timerLabel.stringValue = String(format: "%d:%02d", mins, s)
-        timerLabel.textColor = remainingSeconds <= 30 ? .systemRed : .tertiaryLabelColor
+        timerLabel.textColor = remaining <= 30 ? .systemRed : .tertiaryLabelColor
     }
 
     private func makeHeader() -> NSView {
@@ -143,13 +132,7 @@ final class CheckInViewController: NSViewController {
     }
 
     @objc private func closePanel() {
-        stopCountdown()
         onDismiss()
-    }
-
-    private func stopCountdown() {
-        countdownTimer?.invalidate()
-        countdownTimer = nil
     }
 
     // MARK: - Scoreboard Q2
@@ -158,11 +141,9 @@ final class CheckInViewController: NSViewController {
         showChild(ScoreboardView(
             scoreboard: scoreboard,
             onSelect: { [weak self] choice in
-                self?.stopCountdown()
                 self?.onComplete(choice)
             },
             onCloseAll: { [weak self] in
-                self?.stopCountdown()
                 self?.onCloseAll()
             },
             onCloseAllAndDiscuss: { [weak self] in
@@ -174,7 +155,7 @@ final class CheckInViewController: NSViewController {
 
     private func showChat() {
         // Stop countdown — user is actively engaged
-        countdownTimer?.invalidate()
+        coordinator.stopMenuBarCountdown()
         timerLabel.stringValue = ""
 
         coordinator.chatMessages = []

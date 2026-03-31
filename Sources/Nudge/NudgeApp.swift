@@ -1,6 +1,11 @@
 import SwiftUI
 import SwiftData
 
+private func formatCountdown(_ seconds: TimeInterval) -> String {
+    let secs = max(0, Int(seconds))
+    return String(format: "%d:%02d", secs / 60, secs % 60)
+}
+
 @main
 struct NudgeApp: App {
     let modelContainer: ModelContainer
@@ -52,9 +57,14 @@ struct NudgeApp: App {
                 onQuit: { NSApplication.shared.terminate(nil) }
             )
         } label: {
-            Image(systemName: "eye")
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(coordinator.isLoading ? Color.purple : Color.primary)
+            if let session = coordinator.sessionRemaining, let daily = coordinator.dailyRemaining {
+                Text("\(formatCountdown(session)) | \(formatCountdown(daily))")
+                    .monospacedDigit()
+            } else {
+                Image(systemName: "eye")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(coordinator.isLoading ? Color.purple : Color.primary)
+            }
         }
         .menuBarExtraStyle(.menu)
     }
