@@ -52,7 +52,7 @@ struct NudgeApp: App {
                 onTogglePause: { detector.isPaused.toggle() },
                 onShowCheckIn: { coordinator.refocusPanel() },
                 onTestNudge: {
-                    coordinator.handleDistraction(url: "https://x.com", title: "X / Twitter")
+                    coordinator.testNudge()
                 },
                 onQuit: { NSApplication.shared.terminate(nil) }
             )

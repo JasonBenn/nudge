@@ -3,7 +3,7 @@ import AppKit
 // MARK: - CheckInViewController
 
 final class CheckInViewController: NSViewController {
-    private let scoreboard: [(String, Int)]
+    private let suggestions: [String]
     private unowned let coordinator: CheckInCoordinator
     private let onComplete: (String) -> Void
     private let onCloseAll: () -> Void
@@ -16,13 +16,13 @@ final class CheckInViewController: NSViewController {
     private weak var chatViewRef: AppKitChatView?
     private var timerLabel: NSTextField!
 
-    init(scoreboard: [(String, Int)],
+    init(suggestions: [String],
          coordinator: CheckInCoordinator,
          onComplete: @escaping (String) -> Void,
          onCloseAll: @escaping () -> Void,
          onAutoClose: @escaping () -> Void,
          onDismiss: @escaping () -> Void) {
-        self.scoreboard = scoreboard
+        self.suggestions = suggestions
         self.coordinator = coordinator
         self.onComplete = onComplete
         self.onCloseAll = onCloseAll
@@ -79,7 +79,7 @@ final class CheckInViewController: NSViewController {
                 self.onAutoClose()
             }
         }
-        showScoreboard()
+        showSuggestions()
     }
 
     private func updateTimerDisplay() {
@@ -135,11 +135,11 @@ final class CheckInViewController: NSViewController {
         onDismiss()
     }
 
-    // MARK: - Scoreboard Q2
+    // MARK: - Suggestions
 
-    private func showScoreboard() {
-        showChild(ScoreboardView(
-            scoreboard: scoreboard,
+    private func showSuggestions() {
+        showChild(SuggestionsView(
+            suggestions: suggestions,
             onSelect: { [weak self] choice in
                 self?.onComplete(choice)
             },
@@ -218,9 +218,9 @@ final class CheckInViewController: NSViewController {
     }
 }
 
-// MARK: - ScoreboardView
+// MARK: - SuggestionsView
 
-private final class ScoreboardView: NSView {
+private final class SuggestionsView: NSView {
     private let onSelect: (String) -> Void
     private let onCloseAll: () -> Void
     private let onCloseAllAndDiscuss: () -> Void
@@ -229,7 +229,7 @@ private final class ScoreboardView: NSView {
     private var closeAllTarget: ActionTarget!
     private var discussTarget: ActionTarget!
 
-    init(scoreboard: [(String, Int)], onSelect: @escaping (String) -> Void, onCloseAll: @escaping () -> Void, onCloseAllAndDiscuss: @escaping () -> Void) {
+    init(suggestions: [String], onSelect: @escaping (String) -> Void, onCloseAll: @escaping () -> Void, onCloseAllAndDiscuss: @escaping () -> Void) {
         self.onSelect = onSelect
         self.onCloseAll = onCloseAll
         self.onCloseAllAndDiscuss = onCloseAllAndDiscuss
@@ -239,7 +239,7 @@ private final class ScoreboardView: NSView {
 
         let views: [NSView] = [
             bodyLabel("What would you rather do instead?"),
-            scoreboardButtons(scoreboard),
+            suggestionButtons(suggestions),
             customInputSection(),
             actionButtons(),
         ]
@@ -254,14 +254,13 @@ private final class ScoreboardView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private func scoreboardButtons(_ scoreboard: [(String, Int)]) -> NSStackView {
+    private func suggestionButtons(_ suggestions: [String]) -> NSStackView {
         let stack = vstack(spacing: 8)
-        if scoreboard.isEmpty {
+        if suggestions.isEmpty {
             stack.addArrangedSubview(secondaryLabel("No history yet — type something below"))
         } else {
-            for (choice, count) in scoreboard.prefix(8) {
-                let title = "\(choice)  \u{00d7}\(count)"
-                let btn = OptionNSButton(title: title) { [weak self] in self?.onSelect(choice) }
+            for choice in suggestions.prefix(8) {
+                let btn = OptionNSButton(title: choice) { [weak self] in self?.onSelect(choice) }
                 stack.addArrangedSubview(btn)
                 fillWidth(btn, in: stack)
             }

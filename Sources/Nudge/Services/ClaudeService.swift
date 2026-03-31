@@ -17,6 +17,16 @@ actor ClaudeService {
         return request
     }
 
+    // MARK: - Non-streaming
+
+    func chat(messages: [ClaudeMessage], system: String?) async throws -> String {
+        let body = ClaudeRequest(model: Config.claudeModel, max_tokens: 1024, system: system, messages: messages, stream: nil)
+        let request = try makeRequest(body: body)
+        let (data, _) = try await session.data(for: request)
+        let response = try JSONDecoder().decode(ClaudeResponse.self, from: data)
+        return response.content.first?.text ?? ""
+    }
+
     // MARK: - Streaming chat
 
     func streamChat(messages: [ClaudeMessage], system: String?) -> AsyncThrowingStream<String, Error> {

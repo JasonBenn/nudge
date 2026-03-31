@@ -127,6 +127,15 @@ final class DistractionDetector {
         return nil
     }
 
+    /// Reset cooldowns so the next distracting event triggers immediately.
+    /// Called after Tier 3 auto-close — tabs were closed without user interaction,
+    /// so we should re-trigger if the user reopens them.
+    func resetCooldowns() {
+        lastDistractingEventTime = .distantPast
+        lastTriggerTime = .distantPast
+        lastTriggeredURL = ""
+    }
+
     /// Check if text matches any distraction pattern (used by tab closer).
     func isDistracting(_ text: String) -> Bool {
         classify(text) == "Distraction"

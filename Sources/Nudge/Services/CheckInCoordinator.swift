@@ -57,26 +57,28 @@ final class CheckInCoordinator {
             saveInitialEvent()
 
             if countdown == 0 {
-                // Tier 3: immediate close, no panel
+                // Tier 3: immediate close, no panel — reset cooldowns so we re-trigger
+                // if the user reopens distracting tabs
                 print("[Nudge] Daily distraction: \(String(format: "%.0f", dailyMinutes))min — auto-closing immediately")
                 updateEvent(tabAction: "auto_closed")
                 closeDistractingTabs(keepCurrent: false)
+                detector?.resetCooldowns()
                 return
             }
 
-            // Show panel with countdown + scoreboard
-            let scoreboard = fetchScoreboard()
-            print("[Nudge] Daily distraction: \(String(format: "%.0f", dailyMinutes))min — \(Int(countdown))s countdown, \(scoreboard.count) scoreboard entries")
+            // Show panel with countdown + suggestions
             startMenuBarCountdown(sessionSeconds: countdown, dailyUsedSeconds: dailySeconds)
-            showPanel(scoreboard: scoreboard)
+            let suggestions = await generateSuggestions()
+            print("[Nudge] Daily distraction: \(String(format: "%.0f", dailyMinutes))min — \(Int(countdown))s countdown, \(suggestions.count) suggestions")
+            showPanel(suggestions: suggestions)
         }
     }
 
     // MARK: - Panel
 
-    private func showPanel(scoreboard: [(String, Int)]) {
+    private func showPanel(suggestions: [String]) {
         let vc = CheckInViewController(
-            scoreboard: scoreboard,
+            suggestions: suggestions,
             coordinator: self,
             onComplete: { [weak self] replacement in
                 self?.updateEvent(replacementSelection: replacement, tabAction: "close_all")
@@ -91,7 +93,6 @@ final class CheckInCoordinator {
             onAutoClose: { [weak self] in
                 self?.updateEvent(tabAction: "auto_closed")
                 self?.closeDistractingTabs(keepCurrent: false)
-                self?.dismissPanel()
             },
             onDismiss: { [weak self] in
                 self?.updateEvent(tabAction: "dismissed")
@@ -108,13 +109,28 @@ final class CheckInCoordinator {
         panel.makeKeyAndOrderFront(nil)
     }
 
+    func testNudge() {
+        dismissPanel()
+        currentSiteURL = "https://x.com"
+        currentSiteTitle = "X / Twitter"
+        saveInitialEvent()
+        startMenuBarCountdown(sessionSeconds: 120, dailyUsedSeconds: 1500)
+        Task {
+            let suggestions = await generateSuggestions()
+            showPanel(suggestions: suggestions)
+        }
+    }
+
     func runLatencyTest() {
         dismissPanel()
         currentSiteURL = "https://x.com"
         currentSiteTitle = "Latency Test"
         saveInitialEvent()
         startMenuBarCountdown(sessionSeconds: 300, dailyUsedSeconds: 0)
-        showPanel(scoreboard: fetchScoreboard())
+        Task {
+            let suggestions = await generateSuggestions()
+            showPanel(suggestions: suggestions)
+        }
         InputLatencyMonitor.shared.runTest(panel: panel)
     }
 
@@ -185,25 +201,64 @@ final class CheckInCoordinator {
     }
 
 
-    // MARK: - Scoreboard
+    // MARK: - Suggestions
 
-    private func fetchScoreboard() -> [(String, Int)] {
-        guard let ctx = modelContext else { return [] }
+    private func fetchHistory() -> (selections: [String], starters: [String]) {
+        guard let ctx = modelContext else { return ([], []) }
         let thirtyDaysAgo = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
         let descriptor = FetchDescriptor<NudgeEvent>(
             predicate: #Predicate { $0.timestamp >= thirtyDaysAgo },
             sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
-        guard let events = try? ctx.fetch(descriptor) else { return [] }
+        guard let events = try? ctx.fetch(descriptor) else { return ([], []) }
 
-        var counts: [String: Int] = [:]
+        var selections: [String] = []
+        var starters: [String] = []
         for event in events {
             guard let interaction = event.interaction else { continue }
             let choice = interaction.replacementSelection.trimmingCharacters(in: .whitespaces)
-            guard !choice.isEmpty else { continue }
-            counts[choice, default: 0] += 1
+            if !choice.isEmpty, choice.count <= 100, !choice.contains("\n") {
+                selections.append(choice)
+            }
+            if let first = interaction.conversation.first(where: { $0.role == "user" }) {
+                starters.append(first.content)
+            }
         }
-        return counts.sorted { $0.value > $1.value }
+        return (Array(selections.prefix(100)), Array(starters.prefix(50)))
+    }
+
+    private func generateSuggestions() async -> [String] {
+        let (selections, starters) = fetchHistory()
+        if selections.isEmpty && starters.isEmpty { return [] }
+
+        let prompt = """
+        Here are recent replacement activities a user chose when nudged away from distracting websites (most recent first):
+
+        \(selections.joined(separator: "\n"))
+
+        And here are things they said when starting a conversation about their distraction:
+
+        \(starters.joined(separator: "\n"))
+
+        Generate 5-8 short suggestion buttons for what they might do instead right now. \
+        Each suggestion should be a common CATEGORY from their history, generalized (not task-specific). \
+        Keep each under 50 characters. Return one suggestion per line, nothing else.
+        """
+
+        do {
+            let response = try await claude.chat(
+                messages: [ClaudeMessage(role: "user", content: prompt)],
+                system: "You generate concise activity suggestions. Return only the suggestions, one per line."
+            )
+            return response.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty && $0.count <= 60 }
+        } catch {
+            print("[Nudge] Failed to generate suggestions: \(error)")
+            // Fallback: deduplicated top selections from history
+            var seen = Set<String>()
+            return selections.filter { seen.insert($0).inserted }.prefix(8).map { $0 }
+        }
     }
 
     // MARK: - Persistence
