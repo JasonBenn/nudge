@@ -154,9 +154,8 @@ final class CheckInViewController: NSViewController {
     }
 
     private func showChat() {
-        // Stop countdown — user is actively engaged
-        coordinator.stopMenuBarCountdown()
-        timerLabel.stringValue = ""
+        // Pause countdown — tabs are closed, keep values visible
+        coordinator.pauseMenuBarCountdown()
 
         coordinator.chatMessages = []
         coordinator.streamingText = ""

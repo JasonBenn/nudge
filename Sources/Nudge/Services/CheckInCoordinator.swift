@@ -93,6 +93,7 @@ final class CheckInCoordinator {
             onAutoClose: { [weak self] in
                 self?.updateEvent(tabAction: "auto_closed")
                 self?.closeDistractingTabs(keepCurrent: false)
+                self?.pauseMenuBarCountdown()
             },
             onDismiss: { [weak self] in
                 self?.updateEvent(tabAction: "dismissed")
@@ -135,7 +136,7 @@ final class CheckInCoordinator {
     }
 
     func dismissPanel() {
-        stopMenuBarCountdown()
+        clearMenuBarCountdown()
         panel.dismiss()
         chatMessages = []
         streamingText = ""
@@ -159,7 +160,16 @@ final class CheckInCoordinator {
         }
     }
 
-    func stopMenuBarCountdown() {
+    /// Pause countdown — stops ticking but values remain visible in menu bar.
+    /// Used when tabs are closed but panel is still open.
+    func pauseMenuBarCountdown() {
+        menuBarTimer?.invalidate()
+        menuBarTimer = nil
+    }
+
+    /// Fully clear countdown — values disappear, menu bar reverts to eye icon.
+    /// Used when panel is dismissed.
+    func clearMenuBarCountdown() {
         menuBarTimer?.invalidate()
         menuBarTimer = nil
         sessionRemaining = nil
